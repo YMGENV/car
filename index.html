@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Body Drive — steer with your hands, drive with your feet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0d12; --panel: rgba(14,16,22,.72); --line: rgba(255,214,170,.16);
+    --ink: #f4ecdf; --dim: #a79d8e; --amber: #ffb454; --red: #ff5a3c; --green: #3ddc84; --blue: #4d8dff;
+    --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
+    font-family: var(--display); -webkit-user-select: none; user-select: none; }
+  canvas#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  [hidden] { display: none !important; }
+
+  .glass { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+
+  /* camera preview */
+  #camBox { position: fixed; top: max(14px, env(safe-area-inset-top)); left: 14px; width: min(220px, 40vw); padding: 6px; }
+  #camWrap { position: relative; border-radius: 9px; overflow: hidden; background: #000; aspect-ratio: 4/3; }
+  #camVideo { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; opacity: .85; }
+  #camOverlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #camMeta { display: flex; align-items: center; gap: 8px; margin: 6px 4px 2px; font: 600 12px var(--mono); color: var(--dim); }
+  #trackState { width: 8px; height: 8px; border-radius: 50%; background: #666; }
+  #trackState[data-state="running"] { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  #trackState[data-state="starting"] { background: var(--amber); }
+  #trackState[data-state="error"] { background: var(--red); }
+  #camMeta .sp { flex: 1; }
+  .mini { all: unset; cursor: pointer; font: 600 12px var(--mono); color: var(--amber); padding: 2px 6px; border-radius: 6px; }
+  .mini:hover { background: rgba(255,180,84,.14); }
+  #hints { list-style: none; margin: 6px 2px 2px; padding: 0; font: 500 14px/1.25 var(--display); letter-spacing: .02em; color: var(--amber); }
+  #hints li { padding: 3px 4px 3px 14px; position: relative; }
+  #hints li::before { content: ""; position: absolute; left: 3px; top: 9px; width: 5px; height: 5px; border-radius: 50%; background: var(--amber); }
+
+  /* speed cluster */
+  #cluster { position: fixed; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+    padding: 10px 22px 12px; display: grid; grid-template-columns: auto auto; align-items: end; gap: 0 22px; min-width: 250px; }
+  #speed { font: 700 76px/0.9 var(--display); letter-spacing: -.01em; text-align: right; font-variant-numeric: tabular-nums; }
+  #speedUnit { font: 600 14px var(--mono); color: var(--dim); margin-left: 6px; }
+  #gearBox { text-align: center; }
+  #gearLabel { font: 600 11px var(--mono); color: var(--dim); letter-spacing: .12em; }
+  #gear { font: 700 60px/0.95 var(--display); color: var(--amber); min-width: 1ch; }
+  #rpm { grid-column: 1 / -1; height: 7px; background: rgba(255,255,255,.08); border-radius: 4px; margin-top: 8px; overflow: hidden; }
+  #rpmFill { height: 100%; width: 0; background: linear-gradient(90deg, var(--amber), #ffd27a); border-radius: 4px; transition: width .06s linear; }
+  #rpmFill.hot { background: linear-gradient(90deg, var(--red), #ff9a5c); }
+  #modeRow { grid-column: 1 / -1; display: flex; justify-content: space-between; font: 600 11px var(--mono); color: var(--dim); margin-top: 6px; letter-spacing: .08em; }
+
+  body[data-view="cockpit"] #cluster { opacity: 0; pointer-events: none; }   /* the 3D cluster on the dash replaces it */
+  #tip { position: fixed; left: 50%; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 124px); transform: translateX(-50%);
+    font: 600 18px var(--display); letter-spacing: .06em; text-transform: uppercase; padding: 6px 14px; border-radius: 999px;
+    background: rgba(255,90,60,.9); color: #1a0c08; opacity: 0; transition: opacity .15s; pointer-events: none; white-space: nowrap; }
+  #tip.on { opacity: 1; }
+
+  #toast { position: fixed; top: 18px; left: 50%; transform: translate(-50%, -20px); opacity: 0; transition: .2s; pointer-events: none;
+    padding: 9px 18px; border-radius: 10px; background: rgba(14,16,22,.9); border: 1px solid var(--line);
+    font: 600 18px var(--display); letter-spacing: .04em; max-width: min(90vw, 560px); text-align: center; z-index: 30; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.ok { border-color: rgba(61,220,132,.5); } #toast.warn { border-color: rgba(255,90,60,.7); color: #ffd9cf; }
+
+  /* key help + buttons */
+  #bar { position: fixed; left: 14px; bottom: max(14px, env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: 34vw; }
+  .btn { all: unset; cursor: pointer; padding: 7px 12px; border-radius: 9px; background: var(--panel); border: 1px solid var(--line);
+    font: 600 15px var(--display); letter-spacing: .05em; text-transform: uppercase; backdrop-filter: blur(10px); }
+  .btn:hover { border-color: var(--amber); color: var(--amber); }
+  #src { position: fixed; right: 16px; top: 14px; font: 500 11px var(--mono); color: rgba(255,240,220,.7); text-shadow: 0 1px 3px #000; }
+  #debug { position: fixed; right: 14px; top: 34px; margin: 0; padding: 10px 12px; font: 400 11px/1.5 var(--mono); white-space: pre; color: #d6e8ff; }
+
+  /* calibration overlay */
+  #calib { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(5,6,9,.55); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20; }
+  #calib.show { opacity: 1; pointer-events: auto; }
+  #calibCard { text-align: center; padding: 26px 40px 28px; max-width: 460px; }
+  #calibCount { font: 700 110px/1 var(--display); color: var(--amber); }
+  #calibText { font: 500 22px/1.3 var(--display); letter-spacing: .02em; }
+  #calibTrack { height: 6px; background: rgba(255,255,255,.1); border-radius: 3px; margin-top: 18px; overflow: hidden; }
+  #calibBar { height: 100%; width: 0; background: var(--green); }
+
+  /* start / help modal */
+  #start { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; overflow: auto;
+    background: radial-gradient(1200px 600px at 50% 0%, rgba(255,150,80,.22), transparent 60%), rgba(8,9,13,.9); transition: opacity .25s; }
+  #start.gone { opacity: 0; pointer-events: none; visibility: hidden; }
+  #card { width: min(880px, 100%); padding: 30px 34px 28px; }
+  #card h1 { margin: 0; font: 700 56px/0.95 var(--display); letter-spacing: -.01em; text-transform: uppercase; }
+  #card h1 em { font-style: normal; color: var(--amber); }
+  #card .lede { margin: 8px 0 22px; font: 500 20px/1.35 var(--display); color: var(--dim); max-width: 60ch; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+  h2 { margin: 0 0 8px; font: 600 13px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--amber); }
+  ol, ul.plain { margin: 0; padding: 0 0 0 20px; font: 500 18px/1.38 var(--display); }
+  ol li, ul.plain li { margin-bottom: 5px; }
+  table { border-collapse: collapse; width: 100%; font: 500 17px/1.3 var(--display); }
+  td { padding: 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { color: var(--amber); width: 38%; padding-right: 10px; white-space: nowrap; }
+  kbd { font: 500 12px var(--mono); padding: 1px 6px; border: 1px solid var(--line); border-radius: 5px; background: rgba(255,255,255,.06); }
+  #camError { margin-top: 18px; padding: 12px 14px; border-radius: 10px; background: rgba(255,90,60,.13); border: 1px solid rgba(255,90,60,.55);
+    font: 500 17px/1.35 var(--display); display: grid; gap: 3px; }
+  #camError strong { color: #ffb3a0; letter-spacing: .04em; text-transform: uppercase; font-weight: 700; }
+  .actions { display: flex; gap: 12px; margin-top: 22px; flex-wrap: wrap; align-items: center; }
+  .primary { all: unset; cursor: pointer; padding: 13px 26px; border-radius: 11px; background: var(--amber); color: #1b1004;
+    font: 700 22px var(--display); letter-spacing: .06em; text-transform: uppercase; }
+  .primary:hover { filter: brightness(1.08); } .primary:disabled { opacity: .6; cursor: progress; }
+  .ghost { all: unset; cursor: pointer; padding: 12px 20px; border-radius: 11px; border: 1px solid var(--line);
+    font: 600 19px var(--display); letter-spacing: .05em; text-transform: uppercase; }
+  .ghost:hover { border-color: var(--amber); color: var(--amber); }
+  .note { font: 400 12px/1.5 var(--mono); color: var(--dim); margin-top: 16px; }
+  @media (max-width: 720px) {
+    .cols { grid-template-columns: 1fr; } #card { padding: 20px; } #card h1 { font-size: 40px; }
+    #bar { max-width: 60vw; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 130px); }
+    #cluster { transform: translateX(-50%) scale(.82); transform-origin: bottom center; }
+  }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<!-- camera preview with skeleton overlay + live coaching hints -->
+<aside id="camBox" class="glass" hidden>
+  <div id="camWrap">
+    <video id="camVideo" playsinline muted autoplay></video>
+    <canvas id="camOverlay"></canvas>
+  </div>
+  <div id="camMeta"><span id="trackState" data-state="idle"></span><span id="fps">—</span><span class="sp"></span>
+    <button class="mini" id="btnSwitch" title="Switch front/back camera">flip</button>
+    <button class="mini" id="btnCalibrate" title="Calibrate (C)">calibrate</button></div>
+  <ul id="hints"></ul>
+</aside>
+
+<div id="src"></div>
+<pre id="debug" class="glass" hidden></pre>
+
+<div id="cluster" class="glass">
+  <div><span id="speed">0</span><span id="speedUnit">km/h</span></div>
+  <div id="gearBox"><div id="gearLabel">GEAR</div><div id="gear">1</div></div>
+  <div id="rpm"><div id="rpmFill"></div></div>
+  <div id="modeRow"><span id="modeTxt">ASSISTED</span><span>RPM</span></div>
+</div>
+<div id="tip"></div>
+<div id="toast"></div>
+
+<div id="bar">
+  <button class="btn" id="btnCamView">View · V</button>
+  <button class="btn" id="btnHelp">Help</button>
+</div>
+
+<div id="calib">
+  <div id="calibCard" class="glass">
+    <div id="calibCount">3</div>
+    <div id="calibText"></div>
+    <div id="calibTrack"><div id="calibBar"></div></div>
+  </div>
+</div>
+
+<div id="start">
+  <div id="card" class="glass">
+    <h1>Body <em>Drive</em></h1>
+    <p class="lede">Your hands are the steering wheel, your feet are the pedals. Your camera watches you with MediaPipe Pose — no controller needed.</p>
+    <div class="cols">
+      <div>
+        <h2>Set up</h2>
+        <ol>
+          <li>Prop your phone or webcam <b>2–3 m away</b>, at about hip height, so your <b>whole body — hands to feet —</b> is in view.</li>
+          <li>Stand (or sit back) in a driving stance, both feet flat, arms out as if gripping a wheel at 9 and 3.</li>
+          <li>Press <b>Start with camera</b>, then <kbd>C</kbd> to calibrate. Redo it whenever you move.</li>
+        </ol>
+      </div>
+      <div>
+        <h2>Controls</h2>
+        <table>
+          <tr><td>Steer</td><td>Tilt your hands like turning a wheel, or slide them left / right</td></tr>
+          <tr><td>Throttle</td><td>Lift your <b>right</b> foot (knee up)</td></tr>
+          <tr><td>Brake</td><td>Lift the right foot and sweep it toward your centre</td></tr>
+          <tr><td>Clutch</td><td>Lift your <b>left</b> foot — then the gearbox shifts for you</td></tr>
+          <tr><td>Keyboard</td><td><kbd>←</kbd><kbd>→</kbd> steer · <kbd>↑</kbd> throttle · <kbd>↓</kbd> brake · <kbd>Shift</kbd> clutch</td></tr>
+          <tr><td>Other keys</td><td><kbd>V</kbd> view · <kbd>T</kbd> gearbox mode · <kbd>Q</kbd>/<kbd>E</kbd> shift (manual) · <kbd>C</kbd> calibrate · <kbd>R</kbd> reset · <kbd>H</kbd> debug · <kbd>Y</kbd> stalling</td></tr>
+        </table>
+      </div>
+    </div>
+    <div id="camError" hidden></div>
+    <div class="actions">
+      <button class="primary" id="btnCamera">Start with camera</button>
+      <button class="ghost" id="btnKeys">Keyboard only</button>
+    </div>
+    <p class="note">The camera feed is processed entirely in your browser and never uploaded. First start downloads the pose model (~6 MB).</p>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

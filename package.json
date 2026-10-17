@@ -1,0 +1,15 @@
+{
+  "name": "body-drive",
+  "version": "1.0.0",
+  "description": "3D car driving simulator controlled with your body (MediaPipe Pose + Three.js)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:phone": "vite --config vite.phone.config.js",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^1.1.0",
+    "vite": "^5.4.0"
+  }
+}
