@@ -42,6 +42,7 @@ export class InputMapper {
 
     this._down = (e) => {
       if (e.repeat) return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName)) return;   // typing the join code, etc.
       if (e.ctrlKey || e.metaKey || e.altKey) return;   // leave browser shortcuts (Ctrl+R, Ctrl+C, Cmd+V...) alone
       this.keys.add(e.code);
       const act = { KeyE: 'shiftUp', KeyQ: 'shiftDown', KeyT: 'mode', KeyV: 'camera', KeyC: 'calibrate', KeyR: 'reset', KeyH: 'debug', KeyY: 'stall' }[e.code];

@@ -113,7 +113,43 @@
     #bar { max-width: 60vw; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 130px); }
     #cluster { transform: translateX(-50%) scale(.82); transform-origin: bottom center; }
   }
+
+  /* mode chooser (solo / player / viewer) */
+  #modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 22px; }
+  .mode { all: unset; cursor: pointer; box-sizing: border-box; padding: 12px 14px; border-radius: 11px; border: 1px solid var(--line); display: grid; gap: 3px; }
+  .mode b { font: 700 24px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+  .mode span { font: 500 15px/1.25 var(--display); color: var(--dim); }
+  .mode:hover { border-color: var(--amber); }
+  .mode:focus-visible, .primary:focus-visible, .ghost:focus-visible, .btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  .mode[aria-pressed="true"] { border-color: var(--amber); background: rgba(255,180,84,.12); }
+  .mode[aria-pressed="true"] b { color: var(--amber); }
+  .panel .actions { margin-top: 16px; }
+  .panel p { margin: 16px 0 0; font: 500 17px/1.35 var(--display); color: var(--dim); }
+  #joinCode { all: unset; box-sizing: border-box; width: 9ch; padding: 10px 14px; border-radius: 11px; border: 1px solid var(--line); background: rgba(255,255,255,.05);
+    font: 700 28px var(--mono); letter-spacing: .25em; text-transform: uppercase; text-align: center; -webkit-user-select: text; user-select: text; }
+  #joinCode:focus { border-color: var(--amber); }
+  #start.locked #modes, #start.locked .panel, #start.locked .note { display: none; }
+  #start:not(.locked) #btnClose { display: none; }
+
+  /* link status (viewer shows the code; player shows connection state) */
+  #link { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 25; padding: 12px 20px; text-align: center; max-width: min(92vw, 520px); }
+  #linkState { font: 600 13px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--amber); }
+  #link.ok #linkState { color: var(--green); }
+  #linkCode { font: 700 54px/1.1 var(--mono); letter-spacing: .18em; padding-left: .18em; -webkit-user-select: text; user-select: text; }
+  #linkHelp { font: 500 16px/1.3 var(--display); color: var(--dim); margin-top: 4px; }
+  #linkRow { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+  #link.compact #linkCode { font-size: 20px; }
+  #link.compact #linkHelp, #link.compact #btnCopy { display: none; }
+  body[data-role="player"] #link { top: auto; bottom: max(14px, env(safe-area-inset-bottom)); }
+
+  /* viewer: no camera feed, just hints + calibrate; player: big camera preview, no 3D */
+  body[data-role="viewer"] #camWrap, body[data-role="viewer"] #btnSwitch { display: none; }
+  body[data-role="player"] canvas#scene, body[data-role="player"] #cluster, body[data-role="player"] #tip,
+  body[data-role="player"] #bar, body[data-role="player"] #src, body[data-role="player"] #debug { display: none; }
+  body[data-role="player"] #camBox { left: 50%; transform: translateX(-50%); width: min(560px, 94vw); }
+  body[data-role="player"] #hints { font-size: 18px; }
 </style>
+<script defer src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
 </script>
@@ -141,6 +177,12 @@
   <div id="gearBox"><div id="gearLabel">GEAR</div><div id="gear">1</div></div>
   <div id="rpm"><div id="rpmFill"></div></div>
   <div id="modeRow"><span id="modeTxt">ASSISTED</span><span>RPM</span></div>
+</div>
+<div id="link" class="glass" hidden>
+  <div id="linkState"></div>
+  <div id="linkCode"></div>
+  <div id="linkHelp"></div>
+  <div id="linkRow"><button class="btn" id="btnCopy">Copy link</button><button class="btn" id="btnLeave">Leave</button></div>
 </div>
 <div id="tip"></div>
 <div id="toast"></div>
@@ -183,12 +225,33 @@
         </table>
       </div>
     </div>
-    <div id="camError" hidden></div>
-    <div class="actions">
-      <button class="primary" id="btnCamera">Start with camera</button>
-      <button class="ghost" id="btnKeys">Keyboard only</button>
+    <div id="modes" role="group" aria-label="How do you want to play?">
+      <button class="mode" id="modeSolo" aria-pressed="true"><b>Solo</b><span>One device: camera and game together</span></button>
+      <button class="mode" id="modePlayer" aria-pressed="false"><b>Player</b><span>This phone watches your body and steers the game on the Viewer</span></button>
+      <button class="mode" id="modeViewer" aria-pressed="false"><b>Viewer</b><span>This screen shows the gameplay (start this one first)</span></button>
     </div>
-    <p class="note">The camera feed is processed entirely in your browser and never uploaded. First start downloads the pose model (~6 MB).</p>
+    <div id="camError" hidden></div>
+    <div class="panel" id="panelSolo">
+      <div class="actions">
+        <button class="primary" id="btnCamera">Start with camera</button>
+        <button class="ghost" id="btnKeys">Keyboard only</button>
+      </div>
+    </div>
+    <div class="panel" id="panelPlayer" hidden>
+      <p>1. On the other screen choose <b>Viewer</b> and read out its code. 2. Prop this phone 2–3 m away so your whole body is in view. 3. Enter the code:</p>
+      <div class="actions">
+        <input id="joinCode" maxlength="5" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" aria-label="Viewer code" placeholder="CODE">
+        <button class="primary" id="btnJoin">Connect &amp; start camera</button>
+      </div>
+    </div>
+    <div class="panel" id="panelViewer" hidden>
+      <p>This screen shows the game. You get a 5-letter code (and a link) to enter on the Player phone. Your body movements are sent here in real time; the keyboard also works as a backup.</p>
+      <div class="actions">
+        <button class="primary" id="btnViewer">Start viewer</button>
+      </div>
+    </div>
+    <div class="actions"><button class="ghost" id="btnClose">Close</button></div>
+    <p class="note">The camera feed is processed entirely in your browser and never uploaded. In Player/Viewer mode only body-pose numbers (no video) travel between your two devices, directly where possible; a free public PeerJS server is used just to introduce them. First start downloads the pose model (~6 MB).</p>
   </div>
 </div>
 

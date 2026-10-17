@@ -5,6 +5,7 @@
 import { BodyTracker, CameraError } from './BodyTracker.js';
 import { Simulator } from './Simulator.js';
 import { InputMapper } from './Controls.js';
+import { ViewerLink, PlayerLink, LinkError, normalizeCode, joinUrl, CODE_LEN } from './Link.js';
 
 const $ = (id) => document.getElementById(id);
 const CAL_KEY = 'bodydrive.calibration.v1';
@@ -26,6 +27,8 @@ mapper.attachKeyboard();
 let tracker = null;
 let lastPose = null;
 let calibrating = false;
+let role = 'solo';          // 'solo' | 'player' (camera → viewer) | 'viewer' (game screen fed by the player)
+let link = null;            // PlayerLink / ViewerLink in two-device mode
 window.app = { sim, mapper, get tracker() { return tracker; }, set tracker(t) { tracker = t; } };   // handy in devtools
 
 // ───────────────────────────── toasts ─────────────────────────────
@@ -41,7 +44,9 @@ function toast(msg, kind = '') {
 function showError(err) {
   const box = $('camError');
   let title = 'Could not start tracking', tip = err?.message ?? String(err);
-  if (err instanceof CameraError) {
+  if (err instanceof LinkError) {
+    title = 'Connection problem';
+  } else if (err instanceof CameraError) {
     const tips = {
       'permission-denied': 'Click the camera icon in the address bar, allow access, then press Retry.',
       'insecure-context': 'Browsers only allow cameras on https:// or http://localhost. On a phone, use the HTTPS dev server (see README).',
@@ -51,7 +56,7 @@ function showError(err) {
     };
     title = 'Camera problem';
     tip = `${err.message} ${tips[err.code] ?? ''}`.trim();
-  } else {
+  } else if (!(err instanceof LinkError)) {
     title = 'Pose model failed to load';
     tip = `${tip} — the model and MediaPipe runtime download from cdn.jsdelivr.net and storage.googleapis.com, so an internet connection is required.`;
   }
@@ -64,10 +69,7 @@ function showError(err) {
 
 function closeStart() { $('start').classList.add('gone'); }
 
-$('btnCamera').addEventListener('click', async () => {
-  $('camError').hidden = true;
-  const btn = $('btnCamera');
-  btn.disabled = true; btn.textContent = 'Starting camera…';
+async function beginTracking() {
   tracker?.stop();
   tracker = new BodyTracker({ video: $('camVideo') });
   tracker.onPose(onPose);
@@ -77,17 +79,167 @@ $('btnCamera').addEventListener('click', async () => {
   if (saved) tracker.setCalibration(saved);
   try {
     await tracker.start();
+  } catch (err) {
+    tracker = null;
+    throw err;
+  }
+  return saved;
+}
+
+$('btnCamera').addEventListener('click', async () => {
+  $('camError').hidden = true;
+  const btn = $('btnCamera');
+  btn.disabled = true; btn.textContent = 'Starting camera…';
+  role = 'solo'; document.body.dataset.role = 'solo';
+  try {
+    const saved = await beginTracking();
     $('camBox').hidden = false;
     closeStart();
     toast(saved ? 'Camera ready — saved calibration loaded (C to redo)' : 'Camera ready — press C to calibrate', 'ok');
   } catch (err) {
     console.error(err);
-    tracker = null;
     showError(err);
   } finally {
     btn.disabled = false; btn.textContent = 'Retry with camera';
   }
 });
+
+// ───────────────────────────── player / viewer (two-device mode) ─────────────────────────────
+function selectMode(m) {
+  for (const [k, id] of [['solo', 'Solo'], ['player', 'Player'], ['viewer', 'Viewer']]) {
+    $(`mode${id}`).setAttribute('aria-pressed', String(k === m));
+    $(`panel${id}`).hidden = k !== m;
+  }
+  $('camError').hidden = true;
+  if (m === 'player') $('joinCode').focus();
+}
+$('modeSolo').addEventListener('click', () => selectMode('solo'));
+$('modePlayer').addEventListener('click', () => selectMode('player'));
+$('modeViewer').addEventListener('click', () => selectMode('viewer'));
+$('btnClose').addEventListener('click', closeStart);
+$('joinCode').addEventListener('input', (e) => { e.target.value = normalizeCode(e.target.value); });
+$('joinCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnJoin').click(); });
+
+let wakeLock = null;
+async function keepAwake() { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* not supported / denied */ } }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && role !== 'solo' && link) keepAwake(); });
+
+const linkEl = { box: $('link'), state: $('linkState'), code: $('linkCode'), help: $('linkHelp') };
+function renderLink({ state, code, lost }) {
+  const box = linkEl.box;
+  box.hidden = false;
+  box.classList.toggle('ok', state === 'connected');
+  box.classList.toggle('compact', state === 'connected' || role === 'player');
+  linkEl.code.textContent = code ?? '';
+  if (role === 'viewer') {
+    if (state === 'connected') { linkEl.state.textContent = 'Player connected'; linkEl.help.textContent = ''; }
+    else {
+      linkEl.state.textContent = lost ? 'Player disconnected — waiting…' : 'Viewer ready — waiting for the player';
+      linkEl.help.textContent = 'On the Player phone: open this site, choose Player, enter this code (or use Copy link).';
+    }
+  } else {
+    linkEl.state.textContent = state === 'connected' ? 'Connected to viewer' : state === 'disconnected' ? 'Reconnecting to viewer…' : 'Connecting…';
+    linkEl.help.textContent = '';
+  }
+}
+let prevLinkState = null;
+function onLinkStatus(s) {
+  renderLink(s);
+  if (s.state === prevLinkState) return;
+  if (role === 'viewer') {
+    if (s.state === 'connected') toast('Player connected', 'ok');
+    else if (s.state === 'waiting' && prevLinkState === 'connected') { toast('Player disconnected', 'warn'); mapper.setPose(null); lastPose = null; }
+    $('trackState').dataset.state = s.state === 'connected' ? 'running' : 'starting';
+  } else if (role === 'player') {
+    if (s.state === 'disconnected') toast('Lost the viewer — reconnecting…', 'warn');
+    else if (s.state === 'connected' && prevLinkState === 'disconnected') toast('Reconnected to viewer', 'ok');
+  }
+  prevLinkState = s.state;
+}
+
+function lockStart() { $('start').classList.add('locked'); }
+
+$('btnJoin').addEventListener('click', async () => {
+  const errBox = $('camError');
+  errBox.hidden = true;
+  const code = normalizeCode($('joinCode').value);
+  if (code.length !== CODE_LEN) { showError(new LinkError('code', `Enter the ${CODE_LEN}-character code shown on the Viewer.`)); return; }
+  if (!window.Peer) { showError(new LinkError('lib', 'The connection library could not be loaded. Check your internet connection, any content blocker, and reload.')); return; }
+  const btn = $('btnJoin');
+  btn.disabled = true; btn.textContent = 'Connecting…';
+  role = 'player'; document.body.dataset.role = 'player'; prevLinkState = null;
+  link?.close();
+  link = new PlayerLink({ Peer: window.Peer, code, onStatus: onLinkStatus, onMessage: onPlayerMessage });
+  const [cam, con] = await Promise.allSettled([beginTracking(), link.connect()]);
+  if (cam.status === 'rejected' || con.status === 'rejected') {
+    const err = cam.status === 'rejected' ? cam.reason : con.reason;
+    console.error(err);
+    tracker?.stop(); tracker = null; link?.close(); link = null;
+    role = 'solo'; document.body.dataset.role = 'solo'; linkEl.box.hidden = true;
+    showError(err);
+    btn.disabled = false; btn.textContent = 'Retry';
+    return;
+  }
+  keepAwake();
+  $('camBox').hidden = false;
+  lockStart(); closeStart();
+  renderLink({ state: 'connected', code });
+  toast(store.get() ? 'Connected — saved calibration loaded' : 'Connected — calibrate with the button below (or C on the viewer)', 'ok');
+  btn.disabled = false; btn.textContent = 'Connect & start camera';
+});
+
+$('btnViewer').addEventListener('click', async () => {
+  $('camError').hidden = true;
+  if (!window.Peer) { showError(new LinkError('lib', 'The connection library could not be loaded. Check your internet connection, any content blocker, and reload.')); return; }
+  const btn = $('btnViewer');
+  btn.disabled = true; btn.textContent = 'Starting…';
+  role = 'viewer'; document.body.dataset.role = 'viewer'; prevLinkState = null;
+  link?.close();
+  link = new ViewerLink({ Peer: window.Peer, onStatus: onLinkStatus, onPose: onLinkPose, onMessage: onViewerMessage });
+  try {
+    await link.open();
+  } catch (err) {
+    console.error(err);
+    link?.close(); link = null; role = 'solo'; document.body.dataset.role = 'solo';
+    showError(err);
+    btn.disabled = false; btn.textContent = 'Retry';
+    return;
+  }
+  keepAwake();
+  $('camBox').hidden = false;
+  lockStart(); closeStart();
+  btn.disabled = false; btn.textContent = 'Start viewer';
+});
+
+$('btnCopy').addEventListener('click', async () => {
+  if (!link?.code) return;
+  const url = joinUrl(link.code);
+  try { await navigator.clipboard.writeText(url); toast('Link copied — open it on the Player phone', 'ok'); }
+  catch { toast(url); }
+});
+$('btnLeave').addEventListener('click', () => { link?.close(); location.assign(location.pathname); });
+
+// Viewer side: receive poses + calibration progress from the player
+function onLinkPose(p) {
+  lastPose = p;
+  mapper.setPose(p);
+}
+function onViewerMessage(m) {
+  if (m.t !== 'calib') return;
+  if (m.end) { calibHide(); if (m.ok) toast('Calibrated — your rest pose is now zero', 'ok'); else toast(m.reason || 'Calibration failed', 'warn'); }
+  else if (m.progress != null) $('calibBar').style.width = `${Math.round(m.progress * 100)}%`;
+  else if (m.hold) calibShow('●', '<b>Hold still…</b>');
+  else if (m.n) calibShow(m.n, 'Get in your driving pose.<br><b>Hands as on a wheel, both feet flat on the floor.</b>');
+}
+// Player side: commands from the viewer
+function onPlayerMessage(m) { if (m.t === 'cmd' && m.c === 'calibrate') runCalibration(); }
+
+// ?join=CODE (link from the viewer's "Copy link") opens straight on the Player tab
+{
+  const j = normalizeCode(new URLSearchParams(location.search).get('join'));
+  if (j) { selectMode('player'); $('joinCode').value = j; }
+}
+
 $('btnKeys').addEventListener('click', () => { closeStart(); toast('Keyboard mode — arrows/WASD, Shift = clutch'); });
 $('btnSwitch').addEventListener('click', async () => {
   try { await tracker?.switchCamera(); } catch (e) { toast(e.message, 'warn'); }
@@ -109,7 +261,8 @@ const overlay = $('camOverlay'), octx = overlay.getContext('2d');
 
 function onPose(p) {
   lastPose = p;
-  mapper.setPose(p);
+  if (role === 'player') link?.sendPose(p);
+  else mapper.setPose(p);
   drawPose(p);
 }
 
@@ -143,7 +296,10 @@ function drawPose(p) {
 }
 
 function hints(p) {
-  if (!tracker) return [];
+  if (role === 'viewer') {
+    if (!link?.connected) return ['Waiting for the player phone…'];
+    if (!p || performance.now() - mapper.poseAt > 1000) return ['No data from the player phone — is it awake and open?'];
+  } else if (!tracker) return [];
   if (!p) return ['Starting…'];
   if (!p.valid) return ['No person detected — step into view'];
   const out = [];
@@ -157,23 +313,37 @@ function hints(p) {
 // ───────────────────────────── calibration ─────────────────────────────
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function calibShow(count, html) { $('calib').classList.add('show'); $('calibCount').textContent = count; $('calibText').innerHTML = html; }
+function calibHide() { $('calib').classList.remove('show'); $('calibBar').style.width = '0%'; }
+
 async function runCalibration() {
+  if (role === 'viewer') {                                   // the camera is on the player phone: ask it to calibrate
+    if (link?.send({ t: 'cmd', c: 'calibrate' })) toast('Calibration started on the player phone');
+    else toast('No player connected yet', 'warn');
+    return;
+  }
   if (!tracker) { toast('Calibration needs the camera — click "Start with camera" first', 'warn'); return; }
   if (calibrating) return;
   calibrating = true;
-  const ov = $('calib'), txt = $('calibText'), bar = $('calibBar');
-  ov.classList.add('show'); bar.style.width = '0%';
-  txt.innerHTML = 'Sit or stand in your driving pose.<br><b>Hands as on a wheel, both feet flat on the floor.</b>';
-  for (let n = 3; n >= 1; n--) { $('calibCount').textContent = n; await wait(1000); }
-  $('calibCount').textContent = '●';
-  txt.innerHTML = '<b>Hold still…</b>';
+  const say = (m) => { if (role === 'player') link?.send({ t: 'calib', ...m }); };   // mirror the countdown on the viewer screen
+  $('calibBar').style.width = '0%';
+  const prep = 'Sit or stand in your driving pose.<br><b>Hands as on a wheel, both feet flat on the floor.</b>';
+  for (let n = 3; n >= 1; n--) { calibShow(n, prep); say({ n }); await wait(1000); }
+  calibShow('●', '<b>Hold still…</b>'); say({ hold: true });
   const res = await tracker.calibrate({ durationMs: 2500 });
-  ov.classList.remove('show');
+  calibHide();
   calibrating = false;
+  say({ end: true, ok: res.ok, reason: res.reason });
   if (res.ok) { store.set(res.calibration); toast('Calibrated — your rest pose is now zero', 'ok'); }
   else toast(res.reason, 'warn');
 }
-function onCalibrationEvent(e) { if (e.phase === 'progress') $('calibBar').style.width = `${Math.round(e.progress * 100)}%`; }
+let lastProgressSend = 0;
+function onCalibrationEvent(e) {
+  if (e.phase !== 'progress') return;
+  $('calibBar').style.width = `${Math.round(e.progress * 100)}%`;
+  const t = performance.now();
+  if (role === 'player' && t - lastProgressSend > 100) { lastProgressSend = t; link?.send({ t: 'calib', progress: e.progress }); }
+}
 
 // ───────────────────────────── keyboard actions ─────────────────────────────
 mapper.onAction = (name) => {
@@ -216,7 +386,7 @@ function updateHud(dt, input) {
   else if (v.mode === 'manual' && v.rpm > 5800 && v.gear < 5) tip = 'Shift up: clutch + E';
   el.tip.textContent = tip; el.tip.classList.toggle('on', !!tip);
 
-  if (tracker) {
+  if (tracker || role === 'viewer') {
     const hs = hints(lastPose);
     el.hints.innerHTML = '';
     for (const h of hs) { const li = document.createElement('li'); li.textContent = h; el.hints.append(li); }
@@ -230,7 +400,7 @@ function updateHud(dt, input) {
       `pedals    clutch ${ped?.clutch ?? 0}  brake ${ped?.brake ?? 0}  throttle ${ped?.accelerator ?? 0}  zone ${ped?.rightFootZone ?? '-'}`,
       `inputs    steer ${input.steer.toFixed(2)}  thr ${input.throttle.toFixed(2)}  brk ${input.brake.toFixed(2)}  clu ${input.clutch.toFixed(2)}`,
       `car       ${v.kmh.toFixed(0)} km/h  rpm ${v.rpm.toFixed(0)}  gear ${v.gear}  lat ${v.latAcc.toFixed(1)}  engage ${v.engagement.toFixed(2)}`,
-      `tracker   ${tracker?.status ?? 'off'}  calibrated ${p?.calibrated ?? false}  ${p?.fps ?? 0} fps`,
+      `tracker   ${role === 'viewer' ? (link?.state ?? 'off') : (tracker?.status ?? 'off')}  calibrated ${p?.calibrated ?? false}  ${p?.fps ?? 0} fps`,
     ].join('\n');
   }
 }
@@ -241,6 +411,7 @@ function frame(now) {
   const dt = Math.min(0.05, (now - prev) / 1000);
   prev = now;
   const input = mapper.read(dt);
+  if (role === 'player') { updateHud(dt, input); requestAnimationFrame(frame); return; }   // the player phone only tracks
   sim.update(dt, input);
   for (const e of sim.events) {
     if (e === 'grind') toast('GRIND — press the clutch before shifting', 'warn');

@@ -7,6 +7,7 @@ BodyTracker.js   Camera manager + MediaPipe estimator + smoothing + analyzer + e
 Vehicle.js       Physics: engine, clutch, gearbox, drag, brakes, bicycle-model steering
 World.js         Infinite procedural road, sunset sky, trees, posts, mountains
 Models.js        Car, steering wheel, pedals, cockpit (all procedural)
+Link.js          Player ↔ Viewer link (PeerJS / WebRTC data channel, pairing codes)
 Controls.js      poseData / keyboard → steer, throttle, brake, clutch (the only place with mapping logic)
 Simulator.js     Scene, cameras, per-frame loop, 3D wheel + pedal HUD
 main.js          Wiring and DOM UI
@@ -39,6 +40,16 @@ npm run dev:phone                  # self-signed HTTPS on your LAN
 Prop the phone ~2–3 m away at hip height, in landscape, so your whole body is in view.
 
 **Tests:** `npm test` (no dependencies needed beyond Node 20+).
+
+## Two-device mode: Player + Viewer
+
+On the start screen pick one of three modes:
+
+- **Solo**: one device runs the camera and the game (original behaviour).
+- **Viewer**: this screen shows the gameplay. Start it first; it shows a 5-letter code and a *Copy link* button.
+- **Player**: the phone that watches your body. Prop it 2–3 m away, choose *Player*, enter the Viewer's code (or open the copied `?join=CODE` link) and press *Connect & start camera*.
+
+The Player runs the camera + MediaPipe tracking and streams only small pose numbers (steering, pedals; no video) to the Viewer over a WebRTC data channel. Calibration is triggered with **C** on the Viewer (the countdown shows on both screens) and is saved on the Player phone. If the connection drops the Player reconnects automatically. A free public PeerJS server is used only to introduce the two devices; use the same Wi-Fi for the most reliable connection. Both screens are kept awake while connected (where the browser supports it).
 
 ## Setup & controls
 
