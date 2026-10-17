@@ -14,7 +14,13 @@ const store = {
 };
 
 // ───────────────────────────── core objects ─────────────────────────────
-const sim = new Simulator($('scene'));
+let sim;
+try { sim = new Simulator($('scene')); }
+catch (e) {
+  console.error(e);
+  document.body.innerHTML = '<div style="position:fixed;inset:0;display:grid;place-items:center;padding:24px;text-align:center;background:#0b0d12;color:#fff;font:18px/1.5 system-ui,sans-serif"><div><h1>3D graphics unavailable</h1><p>Body Drive needs WebGL. Enable hardware acceleration in your browser settings, or try a current version of Chrome, Edge, Safari or Firefox.</p></div></div>';
+  throw e;
+}
 const mapper = new InputMapper();
 mapper.attachKeyboard();
 let tracker = null;

@@ -1,7 +1,7 @@
 // Synthetic skeleton generator for tests: builds 33 MediaPipe-style landmarks (normalized + world)
 // for a person facing the camera. Coordinates are authored in USER space (x grows to the user's right,
 // in "height units"), then converted to the camera's native, un-mirrored space like a real estimator returns.
-import { LM } from '../src/BodyTracker.js';
+import { LM } from './BodyTracker.js';
 
 export function makeSkeleton({
   aspect = 4 / 3,

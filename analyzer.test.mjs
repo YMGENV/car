@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BodyTracker, PoseAnalyzer, LM } from '../src/BodyTracker.js';
+import { BodyTracker, PoseAnalyzer, LM } from './BodyTracker.js';
 import { makeSkeleton } from './skeleton.mjs';
 
 const analyze = (opts, analyzer = new PoseAnalyzer()) => analyzer.analyze({ ...makeSkeleton(opts), timestamp: 0 });

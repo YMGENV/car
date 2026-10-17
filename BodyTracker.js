@@ -149,11 +149,13 @@ export class CameraManager {
     if (!this.stream) throw this._translate(lastErr);
 
     this.video.srcObject = this.stream;
-    await new Promise((resolve, reject) => {
-      if (this.video.readyState >= 2) return resolve();
-      const t = setTimeout(() => reject(new CameraError('timeout', 'Camera opened but produced no frames.')), 8000);
-      this.video.onloadeddata = () => { clearTimeout(t); resolve(); };
-    });
+    try {
+      await new Promise((resolve, reject) => {
+        if (this.video.readyState >= 2) return resolve();
+        const t = setTimeout(() => reject(new CameraError('timeout', 'Camera opened but produced no frames.')), 8000);
+        this.video.onloadeddata = () => { clearTimeout(t); resolve(); };
+      });
+    } catch (e) { this.stop(); throw e; }
     try { await this.video.play(); } catch { /* autoplay policies: user gesture already happened in practice */ }
     return this.info;
   }
@@ -166,9 +168,15 @@ export class CameraManager {
 
   /** Flip front/back camera (phones). */
   async switchCamera() {
+    const prev = { facingMode: this.facingMode, deviceId: this.deviceId };
     this.facingMode = this.facingMode === 'user' ? 'environment' : 'user';
     this.deviceId = null;
-    return this.start();
+    try { return await this.start(); }
+    catch (e) {
+      Object.assign(this, prev);
+      try { await this.start(); } catch { /* keep original error */ }
+      throw e;
+    }
   }
 
   /** Re-scale the live stream without re-prompting for permission. */
@@ -528,11 +536,12 @@ export class BodyTracker {
     this._running = false;
     if (this._raf) cancelAnimationFrame(this._raf);
     this.camera?.stop();
+    this.estimator?.dispose?.();
     this.smoother.reset(); this.worldSmoother.reset();
     this._setStatus('stopped');
   }
 
-  async switchCamera() { return this.camera?.switchCamera(); }
+  async switchCamera() { const r = await this.camera?.switchCamera(); this.smoother.reset(); this.worldSmoother.reset(); this._lastVideoTime = -1; return r; }
 
   _setStatus(status, detail = null) {
     this.status = status;

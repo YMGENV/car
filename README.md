@@ -3,16 +3,15 @@
 A 3D driving simulator you control with your body. Hands steer, feet work the pedals. Pose tracking is a standalone, reusable library (`BodyTracker.js`) built on MediaPipe Pose; the simulator is Three.js.
 
 ```
-src/
-  BodyTracker.js   Camera manager + MediaPipe estimator + smoothing + analyzer + events  (no rendering/UI code)
-  Vehicle.js       Physics: engine, clutch, gearbox, drag, brakes, bicycle-model steering
-  World.js         Infinite procedural road, sunset sky, trees, posts, mountains
-  Models.js        Car, steering wheel, pedals, cockpit (all procedural)
-  Controls.js      poseData / keyboard → steer, throttle, brake, clutch (the only place with mapping logic)
-  Simulator.js     Scene, cameras, per-frame loop, 3D wheel + pedal HUD
-  main.js          Wiring and DOM UI
+BodyTracker.js   Camera manager + MediaPipe estimator + smoothing + analyzer + events  (no rendering/UI code)
+Vehicle.js       Physics: engine, clutch, gearbox, drag, brakes, bicycle-model steering
+World.js         Infinite procedural road, sunset sky, trees, posts, mountains
+Models.js        Car, steering wheel, pedals, cockpit (all procedural)
+Controls.js      poseData / keyboard → steer, throttle, brake, clutch (the only place with mapping logic)
+Simulator.js     Scene, cameras, per-frame loop, 3D wheel + pedal HUD
+main.js          Wiring and DOM UI
 index.html         Page, styles, on-screen instructions, camera error handling
-tests/             Unit tests for the analyzer and physics (node --test)
+*.test.mjs         Unit tests for the analyzer and physics (node --test)
 ```
 
 ## Run it
@@ -21,7 +20,7 @@ You need a modern browser and an internet connection (Three.js, the MediaPipe ru
 
 **Option A, no install** (desktop; `localhost` counts as a secure context so the camera works):
 ```bash
-cd car-sim
+cd car
 python3 -m http.server 8080        # or: npx serve .
 # open http://localhost:8080
 ```
@@ -60,7 +59,7 @@ Other keys: **V** cockpit/chase view · **T** gearbox mode · **Q/E** shift (man
 ## Using the tracker on its own
 
 ```js
-import { BodyTracker } from './src/BodyTracker.js';
+import { BodyTracker } from './BodyTracker.js';
 
 const tracker = new BodyTracker({ video: document.querySelector('video') });
 const stop = tracker.onPose((p) => {

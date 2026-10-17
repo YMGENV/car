@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Vehicle } from '../src/Vehicle.js';
+import { Vehicle } from './Vehicle.js';
 
 const road = { center: () => 0, halfWidth: 4 };
 const run = (v, secs, input, dt = 1 / 60) => { for (let t = 0; t < secs; t += dt) v.step(dt, input, road); return v; };
