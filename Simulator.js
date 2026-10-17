@@ -4,7 +4,7 @@
  * Usage:
  *   const sim = new Simulator(canvas);
  *   // each frame:
- *   sim.update(dt, { steer, throttle, brake, clutch });
+ *   sim.update(dt, { steer, throttle, brake });
  *   sim.render();
  */
 import * as THREE from 'three';
@@ -43,7 +43,7 @@ export class Simulator {
     window.addEventListener('resize', () => this.resize());
   }
 
-  /** Second scene rendered into a corner viewport: a big wheel + 3 pedals that visibly follow your inputs. */
+  /** Second scene rendered into a corner viewport: a big wheel + 2 pedals that visibly follow your inputs. */
   _buildHud() {
     const s = this.hud = new THREE.Scene();
     s.add(new THREE.AmbientLight(0xffffff, 1.1));
@@ -62,7 +62,7 @@ export class Simulator {
     this.hudPedals.root.scale.setScalar(1.45);
     this.hudPedals.root.rotation.x = -0.45;
     s.add(this.hudPedals.root);
-    for (const [name, x, txt] of [['clutch', -0.2, 'CLUTCH'], ['brake', 0, 'BRAKE'], ['accelerator', 0.2, 'THROTTLE']]) {
+    for (const [name, x, txt] of [['brake', -0.1, 'BRAKE'], ['accelerator', 0.1, 'THROTTLE']]) {
       const lab = makeLabel(txt, { size: 34, world: 0.34 });
       lab.position.set(0.66 + x * 1.45, -0.72, 0.3);
       s.add(lab);
@@ -112,7 +112,7 @@ export class Simulator {
     const a = v.steerState * STEER_VISUAL;
     car.cockpit.wheel.setAngle(a);
     this.hudWheel.setAngle(a);
-    this.hudPedals.set({ clutch: input.clutch, brake: input.brake, accelerator: input.throttle });
+    this.hudPedals.set({ brake: input.brake, accelerator: input.throttle });
     car.cockpit.updateCluster({ kmh: v.kmh, gear: v.engineOn ? v.gear : 'X', rpm: v.rpm, redline: v.p.redline, mode: v.mode });
 
     this.world.update(v.s, this.camera);

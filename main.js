@@ -73,7 +73,10 @@ async function beginTracking() {
   tracker?.stop();
   tracker = new BodyTracker({ video: $('camVideo') });
   tracker.onPose(onPose);
-  tracker.on('status', ({ status }) => { $('trackState').dataset.state = status; });
+  tracker.on('status', ({ status, detail }) => {
+    $('trackState').dataset.state = status;
+    if (detail === 'model-lite') toast('Switched to the lighter pose model to keep tracking smooth');
+  });
   tracker.on('calibration', onCalibrationEvent);
   const saved = store.get();
   if (saved) tracker.setCalibration(saved);
@@ -240,7 +243,7 @@ function onPlayerMessage(m) { if (m.t === 'cmd' && m.c === 'calibrate') runCalib
   if (j) { selectMode('player'); $('joinCode').value = j; }
 }
 
-$('btnKeys').addEventListener('click', () => { closeStart(); toast('Keyboard mode — arrows/WASD, Shift = clutch'); });
+$('btnKeys').addEventListener('click', () => { closeStart(); toast('Keyboard mode — arrows or WASD (automatic gearbox)'); });
 $('btnSwitch').addEventListener('click', async () => {
   try { await tracker?.switchCamera(); } catch (e) { toast(e.message, 'warn'); }
 });
@@ -273,7 +276,6 @@ function drawPose(p) {
   if (!p.valid) return;
   const ped = p.gestures.pedalState, L = p.landmarks;
   const colour = (a, b) => {
-    if (a.startsWith('left') && ['Hip', 'Knee', 'Ankle', 'Foot'].some((s) => a.includes(s)) && ped.clutch > 0.15) return '#4d8dff';
     if (a.startsWith('right') && ['Knee', 'Ankle', 'Foot'].some((s) => a.includes(s)) && (ped.brake > 0.15 || ped.accelerator > 0.15)) return ped.brake > ped.accelerator ? '#ff4d4d' : '#3ddc84';
     return 'rgba(255,230,190,0.85)';
   };
@@ -303,7 +305,7 @@ function hints(p) {
   if (!p) return ['Starting…'];
   if (!p.valid) return ['No person detected — step into view'];
   const out = [];
-  if (!p.quality.lowerBody) out.push('Feet not visible — step back or tilt the camera down');
+  if (!(p.quality.rightLeg ?? p.quality.lowerBody)) out.push('Right foot not visible — step back or tilt the camera down');
   if (!p.quality.upperBody) out.push('Show both hands');
   else if (p.gestures.handsPosition !== 'wheel') out.push('Hold both hands out as if gripping a wheel');
   if (!p.calibrated) out.push('Press C to calibrate your driving pose');
@@ -347,22 +349,17 @@ function onCalibrationEvent(e) {
 
 // ───────────────────────────── keyboard actions ─────────────────────────────
 mapper.onAction = (name) => {
-  const v = sim.vehicle;
   switch (name) {
-    case 'shiftUp': if (v.mode !== 'manual') toast('Shift keys only work in manual mode (T)'); else v.requestShift(+1, mapper.out.clutch); break;
-    case 'shiftDown': if (v.mode !== 'manual') toast('Shift keys only work in manual mode (T)'); else v.requestShift(-1, mapper.out.clutch); break;
-    case 'mode': toast(`Transmission: ${v.cycleMode()}`); break;
     case 'camera': toggleView(); break;
     case 'calibrate': runCalibration(); break;
     case 'reset': sim.reset(); toast('Car reset'); break;
     case 'debug': $('debug').hidden = !$('debug').hidden; break;
-    case 'stall': v.stallEnabled = !v.stallEnabled; toast(`Stalling ${v.stallEnabled ? 'ON (realistic)' : 'OFF'}`); break;
   }
 };
 
 // ───────────────────────────── HUD (DOM) ─────────────────────────────
 const el = { speed: $('speed'), gear: $('gear'), rpm: $('rpmFill'), mode: $('modeTxt'), tip: $('tip'), hints: $('hints'), src: $('src'), dbg: $('debug'), fps: $('fps') };
-const MODE_NAMES = { assisted: 'ASSISTED', manual: 'MANUAL', auto: 'AUTO' };
+const MODE_NAMES = { assisted: 'ASSISTED', manual: 'MANUAL', auto: 'AUTOMATIC' };
 let hudAcc = 0;
 
 function updateHud(dt, input) {
@@ -379,11 +376,7 @@ function updateHud(dt, input) {
   el.src.textContent = `steer: ${input.sources.steer} · pedals: ${input.sources.pedals}`;
 
   let tip = '';
-  if (!v.engineOn) tip = 'ENGINE STALLED — press the clutch to restart';
-  else if (v.offRoad) tip = 'OFF ROAD — steer back onto the asphalt';
-  else if (v.mode === 'assisted' && v.rpm > 5600 && input.throttle > 0.4 && v.gear < 5) tip = 'High revs — press the clutch to shift up';
-  else if (v.mode === 'assisted' && v.rpm < 1500 && input.throttle > 0.5 && v.gear > 1) tip = 'Lugging — press the clutch to shift down';
-  else if (v.mode === 'manual' && v.rpm > 5800 && v.gear < 5) tip = 'Shift up: clutch + E';
+  if (v.offRoad) tip = 'OFF ROAD — steer back onto the asphalt';
   el.tip.textContent = tip; el.tip.classList.toggle('on', !!tip);
 
   if (tracker || role === 'viewer') {
@@ -397,8 +390,8 @@ function updateHud(dt, input) {
     el.dbg.textContent = [
       `hands     ${g?.handsPosition ?? '-'}  tilt ${g?.hands.wheelAngleDeg ?? '-'}°  shift ${g?.hands.lateral ?? '-'}  sep ${g?.hands.separation ?? '-'}`,
       `knees     L ${p?.angles.leftKnee ?? '-'}°  R ${p?.angles.rightKnee ?? '-'}°`,
-      `pedals    clutch ${ped?.clutch ?? 0}  brake ${ped?.brake ?? 0}  throttle ${ped?.accelerator ?? 0}  zone ${ped?.rightFootZone ?? '-'}`,
-      `inputs    steer ${input.steer.toFixed(2)}  thr ${input.throttle.toFixed(2)}  brk ${input.brake.toFixed(2)}  clu ${input.clutch.toFixed(2)}`,
+      `pedals    brake ${ped?.brake ?? 0}  throttle ${ped?.accelerator ?? 0}  zone ${ped?.rightFootZone ?? '-'}`,
+      `inputs    steer ${input.steer.toFixed(2)}  thr ${input.throttle.toFixed(2)}  brk ${input.brake.toFixed(2)}`,
       `car       ${v.kmh.toFixed(0)} km/h  rpm ${v.rpm.toFixed(0)}  gear ${v.gear}  lat ${v.latAcc.toFixed(1)}  engage ${v.engagement.toFixed(2)}`,
       `tracker   ${role === 'viewer' ? (link?.state ?? 'off') : (tracker?.status ?? 'off')}  calibrated ${p?.calibrated ?? false}  ${p?.fps ?? 0} fps`,
     ].join('\n');
@@ -413,11 +406,6 @@ function frame(now) {
   const input = mapper.read(dt);
   if (role === 'player') { updateHud(dt, input); requestAnimationFrame(frame); return; }   // the player phone only tracks
   sim.update(dt, input);
-  for (const e of sim.events) {
-    if (e === 'grind') toast('GRIND — press the clutch before shifting', 'warn');
-    else if (e === 'stall') toast('ENGINE STALLED', 'warn');
-    else if (e === 'restart') toast('Engine restarted', 'ok');
-  }
   sim.render();
   updateHud(dt, input);
   requestAnimationFrame(frame);

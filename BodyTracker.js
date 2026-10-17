@@ -94,7 +94,7 @@ export class CameraError extends Error {
  * front/back switching. It owns the MediaStream and attaches it to a <video> element.
  */
 export class CameraManager {
-  constructor({ video = null, facingMode = 'user', width = 640, height = 480, frameRate = 30, deviceId = null } = {}) {
+  constructor({ video = null, facingMode = 'user', width = 960, height = 540, frameRate = 30, deviceId = null } = {}) {
     this.video = video || document.createElement('video');
     this.video.setAttribute('playsinline', '');   // iOS Safari: don't go fullscreen
     this.video.muted = true;
@@ -219,7 +219,8 @@ const MODEL_BASE = 'https://storage.googleapis.com/mediapipe-models/pose_landmar
  * returning { landmarks, worldLandmarks } (33 points each) can replace this class.
  */
 export class MediaPipePoseEstimator {
-  constructor({ variant = 'lite', modelUrl = null, delegate = 'GPU', visionUrl = VISION_CDN } = {}) {
+  constructor({ variant = 'full', modelUrl = null, delegate = 'GPU', visionUrl = VISION_CDN } = {}) {
+    this.variant = variant;
     this.modelUrl = modelUrl ?? `${MODEL_BASE}/pose_landmarker_${variant}/float16/1/pose_landmarker_${variant}.task`;
     this.delegate = delegate;
     this.visionUrl = visionUrl;
@@ -273,12 +274,16 @@ class OneEuro {
 }
 
 class LandmarkSmoother {
-  constructor({ minCutoff = 1.0, beta = 8 } = {}) { this.opts = { minCutoff, beta }; this.f = []; }
+  constructor({ minCutoff = 1.0, beta = 8, minVis = 0.3 } = {}) { this.opts = { minCutoff, beta }; this.minVis = minVis; this.f = []; }
   reset() { this.f = []; }
   smooth(points, t) {
     return points.map((p, i) => {
       const f = (this.f[i] ??= [0, 1, 2].map(() => new OneEuro(this.opts.minCutoff, this.opts.beta)));
-      return { x: f[0].filter(p.x, t), y: f[1].filter(p.y, t), z: f[2].filter(p.z ?? 0, t), visibility: p.visibility ?? 1 };
+      const vis = p.visibility ?? 1;
+      // A point MediaPipe isn't confident about is a guess: hold the last good position instead of feeding the guess
+      // into the filter, so a hidden foot can't drag the estimate around (or yank it when it reappears).
+      if (vis < this.minVis && f[0].x !== null) return { x: f[0].x, y: f[1].x, z: f[2].x, visibility: vis };
+      return { x: f[0].filter(p.x, t), y: f[1].filter(p.y, t), z: f[2].filter(p.z ?? 0, t), visibility: vis };
     });
   }
 }
@@ -312,9 +317,16 @@ export class PoseAnalyzer {
     this.cfg = { ...DEFAULT_ANALYZER_CONFIG, ...config };
     this.calibration = null;
     this._brakeLatched = false;
+    this._pressHist = { left: [], right: [] };
   }
 
   setCalibration(c) { this.calibration = c; }
+
+  _median3(side, v) {
+    const h = this._pressHist[side];
+    h.push(v); if (h.length > 3) h.shift();
+    return h.length < 3 ? v : [...h].sort((a, b) => a - b)[1];
+  }
 
   /**
    * @param {{landmarks:Array, worldLandmarks?:Array, timestamp?:number, aspect?:number}} frame
@@ -347,6 +359,7 @@ export class PoseAnalyzer {
 
     const upperBody = ok(LS, RS, LW, RW);
     const lowerBody = ok(LH, RH, LK, RK, LA, RA);
+    const rightLeg = ok(LH, RH, RK, RA);          // the automatic car only needs the right foot (hips give the body scale)
     const vis = [LS, RS, LW, RW, LH, RH, LK, RK, LA, RA].map((i) => u[i].visibility);
 
     // ── Joint angles (3D, degrees) ──
@@ -392,7 +405,7 @@ export class PoseAnalyzer {
     // ── Legs / pedals ──
     const leg = (side) => {
       const [H, K, A] = side === 'left' ? [LH, LK, LA] : [RH, RK, RA];
-      if (!ok(H, K, A)) return { visible: false, press: 0, state: 'unknown', kneeAngle: null, lateral: 0 };
+      if (!ok(H, K, A)) { this._pressHist[side].length = 0; return { visible: false, press: 0, state: 'unknown', kneeAngle: null, lateral: 0 }; }
       const knee = angle3(w[H], w[K], w[A]);
       const drop = (u[A].y - u[H].y) / torso;
       const lateral = ((u[A].x - u[H].x) * aspect) / hipW;       // + = foot outward on its own side for the right leg is +, see brake logic
@@ -401,7 +414,7 @@ export class PoseAnalyzer {
       const restD = cal.restDrop?.[side] ?? cfg.restLegDrop;
       const flex = clamp((restK - knee) / cfg.pedalKneeRange, 0, 1);   // knee bends as the foot comes up/forward
       const lift = clamp((restD - drop) / cfg.pedalLiftRange, 0, 1);   // ankle rises toward the hip
-      const press = Math.max(flex, lift);
+      const press = this._median3(side, Math.max(flex, lift));   // one-frame spikes (a jittery ankle) never reach the pedals
       return {
         visible: true, press: round(press, 3), flex: round(flex, 3), lift: round(lift, 3),
         state: press >= cfg.pedalDownThreshold ? 'down' : press >= cfg.pedalPressThreshold ? 'pressing' : 'up',
@@ -433,7 +446,7 @@ export class PoseAnalyzer {
     return {
       schema: 'bodytracker/1',
       timestamp, valid: true, aspect: round(aspect, 3),
-      quality: { score: round(vis.reduce((s, v) => s + v, 0) / vis.length, 2), upperBody, lowerBody },
+      quality: { score: round(vis.reduce((s, v) => s + v, 0) / vis.length, 2), upperBody, lowerBody, rightLeg },
       calibrated: !!this.calibration,
       landmarks: named(u, true),
       world: named(w, false),
@@ -457,7 +470,7 @@ export class PoseAnalyzer {
     const z = { visible: false, press: 0, state: 'unknown', kneeAngle: null, lateral: 0 };
     return {
       schema: 'bodytracker/1', timestamp, valid: false, aspect: null,
-      quality: { score: 0, upperBody: false, lowerBody: false }, calibrated: !!this.calibration,
+      quality: { score: 0, upperBody: false, lowerBody: false, rightLeg: false }, calibrated: !!this.calibration,
       landmarks: null, world: null,
       angles: { leftElbow: null, rightElbow: null, leftKnee: null, rightKnee: null, leftHip: null, rightHip: null, shoulderTilt: null, wristLine: null },
       gestures: {
@@ -482,15 +495,21 @@ export class BodyTracker {
    * @param {HTMLVideoElement} [o.video]            existing <video>; created by CameraManager if omitted
    * @param {CameraManager|null} [o.camera]         pass null to feed frames yourself (file, remote stream, tests)
    * @param {object|null} [o.estimator]             pass null for headless use with processFrame()
+   * @param {(variant:string)=>object} [o.estimatorFactory]  builds the default estimator ('full', then 'lite' as fallback)
    * @param {number} [o.maxFps=30]
    * @param {{minCutoff:number,beta:number}} [o.smoothing]
    * @param {object} [o.analyzer]                   PoseAnalyzer config overrides
    */
-  constructor({ video = null, camera, estimator, maxFps = 30, smoothing = {}, analyzer = {} } = {}) {
+  constructor({ video = null, camera, estimator, estimatorFactory = null, maxFps = 30, smoothing = {}, analyzer = {} } = {}) {
     this.events = new Emitter();
     this.camera = camera === undefined ? (typeof document !== 'undefined' ? new CameraManager({ video }) : null) : camera;
     this.video = this.camera?.video ?? video;
-    this.estimator = estimator === undefined ? new MediaPipePoseEstimator() : estimator;
+    // Default: the more accurate 'full' pose model; it quietly steps down to 'lite' if it can't keep up (slow phones)
+    // or can't be downloaded. A custom estimator (or null) is used as-is.
+    this.estimatorFactory = estimatorFactory ?? ((variant) => new MediaPipePoseEstimator({ variant }));
+    this._adaptive = estimator === undefined;
+    this.estimator = estimator === undefined ? this.estimatorFactory('full') : estimator;
+    this._detectMs = 0; this._detectN = 0; this._downgrading = false;
     this.analyzer = new PoseAnalyzer(analyzer);
     this.smoother = new LandmarkSmoother(smoothing);
     this.worldSmoother = new LandmarkSmoother(smoothing);
@@ -518,7 +537,7 @@ export class BodyTracker {
     this._setStatus('starting');
     try {
       // Camera permission prompt and model download run in parallel to shorten the wait.
-      const jobs = await Promise.allSettled([this.camera?.start(), this.estimator?.init()]);
+      const jobs = await Promise.allSettled([this.camera?.start(), this._initEstimator()]);
       const failed = jobs.find((j) => j.status === 'rejected');
       if (failed) throw failed.reason;
     } catch (err) {
@@ -530,6 +549,35 @@ export class BodyTracker {
     this._running = true;
     this._setStatus('running');
     this._raf = requestAnimationFrame(this._tick);
+  }
+
+  /** Loads the pose model; if the accurate one can't be loaded, falls back to the light one. */
+  async _initEstimator() {
+    if (!this.estimator) return;
+    try { await this.estimator.init(); }
+    catch (e) {
+      if (!this._adaptive || this.estimator.variant !== 'full') throw e;
+      console.warn('[BodyTracker] full pose model failed to load, trying lite', e);
+      this.estimator.dispose?.();
+      this.estimator = this.estimatorFactory('lite');
+      await this.estimator.init();
+    }
+  }
+
+  /** Swap to the lite model when detection is too slow to keep the pedals responsive. */
+  async _downgrade() {
+    if (this._downgrading || !this._adaptive || this.estimator?.variant !== 'full') return;
+    this._downgrading = true;
+    try {
+      const next = this.estimatorFactory('lite');
+      await next.init();
+      if (!this._running) { next.dispose?.(); return; }
+      const old = this.estimator;
+      this.estimator = next;
+      old?.dispose?.();
+      this.events.emit('status', { status: this.status, detail: 'model-lite' });
+    } catch (e) { console.warn('[BodyTracker] could not switch to the lite model', e); }
+    finally { this._downgrading = false; this._detectMs = 0; this._detectN = 0; }
   }
 
   stop() {
@@ -558,8 +606,12 @@ export class BodyTracker {
     this._lastVideoTime = v.currentTime;
     this._lastRun = t;
     let det = null;
+    const t0 = now();
     try { det = this.estimator.detect(v, t); }
     catch (e) { this.events.emit('error', e); return; }
+    // running average of detection time; sustained > ~38 ms means we can't hold 25+ fps → use the lighter model
+    this._detectMs += ((now() - t0) - this._detectMs) * (this._detectN++ ? 0.08 : 1);
+    if (this._detectN > 60 && this._detectMs > 38) this._downgrade();
     this.processFrame(det?.landmarks ?? null, det?.worldLandmarks ?? null, t, v.videoWidth / v.videoHeight);
   };
 
@@ -621,7 +673,7 @@ export class BodyTracker {
         const m = (pick) => median(samples.map(pick));
         const ok = samples.length >= minSamples;
         if (!ok) {
-          const reason = `Only ${samples.length} clear frames captured. Make sure your whole body (hands to feet) is visible and hold still.`;
+          const reason = `Only ${samples.length} clear frames captured. Make sure your hands, hips and right foot are visible and hold still.`;
           this.events.emit('calibration', { phase: 'failed', progress: 1, reason });
           return resolve({ ok: false, reason });
         }
@@ -640,8 +692,8 @@ export class BodyTracker {
       off = this.onPose((p) => {
         const elapsed = now() - t0;
         const m = p.measurements;
-        if (p.valid && p.quality.upperBody && p.quality.lowerBody && m
-          && m.kneeAngle.left != null && m.kneeAngle.right != null && m.handAngleDeg != null) samples.push(m);
+        if (p.valid && p.quality.upperBody && p.quality.rightLeg && m
+          && m.kneeAngle.right != null && m.handAngleDeg != null) samples.push(m);
         this.events.emit('calibration', { phase: 'progress', progress: Math.min(1, elapsed / durationMs), samples: samples.length });
         if (elapsed >= durationMs) finish();
       });

@@ -4,11 +4,11 @@ A 3D driving simulator you control with your body. Hands steer, feet work the pe
 
 ```
 BodyTracker.js   Camera manager + MediaPipe estimator + smoothing + analyzer + events  (no rendering/UI code)
-Vehicle.js       Physics: engine, clutch, gearbox, drag, brakes, bicycle-model steering
+Vehicle.js       Physics: engine, automatic gearbox, drag, brakes, bicycle-model steering
 World.js         Infinite procedural road, sunset sky, trees, posts, mountains
 Models.js        Car, steering wheel, pedals, cockpit (all procedural)
 Link.js          Player ↔ Viewer link (PeerJS / WebRTC data channel, pairing codes)
-Controls.js      poseData / keyboard → steer, throttle, brake, clutch (the only place with mapping logic)
+Controls.js      poseData / keyboard → steer, throttle, brake (the only place with mapping logic)
 Simulator.js     Scene, cameras, per-frame loop, 3D wheel + pedal HUD
 main.js          Wiring and DOM UI
 index.html         Page, styles, on-screen instructions, camera error handling
@@ -37,7 +37,7 @@ npm run dev                        # http://localhost:5173
 npm run dev:phone                  # self-signed HTTPS on your LAN
 # on the phone (same Wi-Fi): https://<computer-LAN-IP>:5173  → accept the certificate warning once
 ```
-Prop the phone ~2–3 m away at hip height, in landscape, so your whole body is in view.
+Prop the phone ~2–3 m away at hip height, in landscape, so your hands, hips and right foot are in view.
 
 **Tests:** `npm test` (no dependencies needed beyond Node 20+).
 
@@ -53,19 +53,18 @@ The Player runs the camera + MediaPipe tracking and streams only small pose numb
 
 ## Setup & controls
 
-1. Get your whole body (hands to feet) into the camera view, 2–3 m away.
-2. Click **Start with camera**, allow access, then press **C** and hold your driving pose for the countdown: hands as if gripping a wheel, both feet flat. Calibration is saved in the browser; redo it whenever you move.
+1. Get your hands, hips and right foot into the camera view, 2–3 m away (the left foot is not needed).
+2. Click **Start with camera**, allow access, then press **C** and hold your driving pose for the countdown: hands as if gripping a wheel, right foot flat. Calibration is saved in the browser; redo it whenever you move.
 
 | Input | Body | Keyboard |
 |---|---|---|
 | Steer | Tilt your hands like turning a wheel, and/or slide them left/right | ← → / A D |
 | Throttle | Lift right foot (knee up) | ↑ / W |
 | Brake | Lift right foot **and sweep it toward your body centre** (the brake sits left of the throttle) | ↓ / S |
-| Clutch | Lift left foot | Shift / Z / Space |
 
-Other keys: **V** cockpit/chase view · **T** gearbox mode · **Q/E** shift (manual mode) · **C** calibrate · **R** reset · **H** debug panel · **Y** toggle stalling.
+Other keys: **V** cockpit/chase view · **C** calibrate · **R** reset · **H** debug panel.
 
-**Gearbox modes** (T): *assisted* (default: press the clutch and the box picks the right gear for your speed), *manual* (clutch + Q/E, otherwise it grinds), *auto* (clutch ignored). Letting the clutch out gradually launches smoothly; dumping it is abrupt. With stalling on (Y), dumping it at a standstill in a high gear stalls the engine and the clutch restarts it. There is no reverse gear.
+**Gearbox:** automatic. Light throttle shifts up early, hard throttle holds each gear longer, flooring the pedal at cruise kicks down, and braking steps the gearbox down so you can pull away again. There is no clutch and no reverse gear.
 
 ## Using the tracker on its own
 
@@ -76,7 +75,7 @@ const tracker = new BodyTracker({ video: document.querySelector('video') });
 const stop = tracker.onPose((p) => {
   p.gestures.handsPosition;          // 'wheel' | 'raised' | 'lowered' | 'free' | 'partial' | 'lost'
   p.gestures.hands.wheelAngleDeg;    // + = clockwise (steer right)
-  p.gestures.pedalState;             // { accelerator, brake, clutch, active: [...], left, right }
+  p.gestures.pedalState;             // { accelerator, brake, clutch, active: [...], left, right } (the game ignores clutch)
   p.angles.rightKnee;                // degrees; also elbows, hips, shoulderTilt
   p.landmarks.rightAnkle;            // {x,y,z,visibility}, mirrored "user space"
 });
@@ -98,8 +97,10 @@ Mapping gains (full-lock angle, deadzones, expo, pedal gain) are in `DEFAULT_MAP
 - **Camera blocked / not found / in use:** the start screen shows what happened and how to fix it. Keyboard-only mode always works.
 - **"Camera needs a secure page":** use `localhost` or HTTPS (see the phone instructions).
 - **Pose model failed to load:** the runtime comes from `cdn.jsdelivr.net` and the model from `storage.googleapis.com`; check your connection or any content blocker.
-- **Pedals twitch or stick on:** recalibrate (C), make sure feet are visible, and keep lighting even. Camera at hip height works best; a camera looking steeply down shortens the legs and hides foot lift.
-- **Low frame rate:** the lite model with the GPU delegate is the default; MediaPipe falls back to CPU automatically.
+- **Pedals twitch or stick on:** recalibrate (C), make sure your right foot is visible, and keep lighting even. Camera at hip height works best; a camera looking steeply down shortens the legs and hides foot lift.
+- **Low frame rate:** the more accurate *full* pose model is the default. If detection can't keep up it switches to the *lite* model by itself (and uses lite if the full model can't be downloaded). MediaPipe also falls back from GPU to CPU automatically.
+
+**Tracking robustness:** pedals use a median filter (one-frame spikes are ignored), landmarks MediaPipe isn't confident about are held instead of jittering, short tracking dropouts (≤ 0.25 s) are ridden through, and only the right leg is required.
 
 ## Known limits
 

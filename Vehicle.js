@@ -9,10 +9,10 @@
  *   x    lateral position (m), + = right
  *   yaw  heading relative to straight ahead (rad), + = turning toward +x (right)
  *
- * Transmission modes (cycled with the T key in the app):
+ * Transmission modes (the app always runs 'auto'; the others remain for tests / experiments):
  *   'assisted'  DEFAULT. Press the clutch and the box picks the right gear for your speed. Body-friendly.
  *   'manual'    You choose gears (Q/E). A shift only succeeds with the clutch pressed, otherwise: GRIND.
- *   'auto'      Clutch ignored, gearbox shifts itself.
+ *   'auto'      DEFAULT. Clutch ignored, gearbox shifts itself (throttle-dependent shift points + kickdown).
  */
 const TAU = Math.PI * 2;
 const G = 9.81;
@@ -34,7 +34,7 @@ export class Vehicle {
       gripG: 0.95,
       ...params,
     };
-    this.mode = 'assisted';
+    this.mode = 'auto';             // the game plays as an automatic: no clutch or gear keys needed
     this.stallEnabled = false;
     this.events = [];
     this.reset();
@@ -74,6 +74,26 @@ export class Vehicle {
     return true;
   }
 
+  /**
+   * Automatic gearbox. Light throttle shifts up early (quiet, efficient); hard throttle holds each gear longer;
+   * a floored pedal below the power band kicks down. Up/down thresholds are kept apart so it never hunts.
+   */
+  _autoShift(thr, brk) {
+    const p = this.p, top = p.gears.length, g = this.gear;
+    const up = 2800 + thr * 3000;                                   // rpm at which we change up (2800 … 5800)
+    const downLimit = 1250 + thr * 900;                            // below this rpm in the current gear, change down
+    const rpmNow = this.rpmAt(this.speed, g);
+    const change = (dir) => { this.gear = g + dir; this._shiftTimer = dir > 0 ? 0.5 : 0.35; this.events.push('shift'); };
+
+    if (g < top && rpmNow > up && this.rpmAt(this.speed, g + 1) > 1700 && brk < 0.3) return change(+1);
+    if (g > 1) {
+      const lower = this.rpmAt(this.speed, g - 1);
+      if (thr > 0.85 && rpmNow < 3600 && lower < 6000) return change(-1);                          // kickdown
+      if (rpmNow < downLimit && lower < up - 400) return change(-1);                                // lugging / slowing down
+      if (brk > 0.6 && lower < 4200 && rpmNow < 2400) return change(-1);                            // braking: engine-brake and be ready
+    }
+  }
+
   _torqueCurve(rpm) {
     const x = (rpm - 4300) / 4300;
     return this.p.peakTorque * clamp(1 - 0.8 * x * x, 0.35, 1);
@@ -98,8 +118,7 @@ export class Vehicle {
       const g = this.bestGear();
       if (g !== this.gear) { this.gear = g; this.events.push('shift'); }
     } else if (this.mode === 'auto' && this._shiftTimer === 0) {
-      if (this.rpm > 5400 && this.gear < p.gears.length) { this.gear++; this._shiftTimer = 0.6; this.events.push('shift'); }
-      else if (this.gear > 1 && this.rpmAt(this.speed, this.gear) < 1400) { this.gear--; this._shiftTimer = 0.6; this.events.push('shift'); }
+      this._autoShift(thr, brk);
     }
 
     // Clutch bite: fully engaged below 30 % pedal, fully open above 80 %.

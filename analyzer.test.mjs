@@ -136,3 +136,82 @@ test('tracker: calibration fails clearly when feet are not visible', async () =>
   assert.equal(res.ok, false);
   assert.match(res.reason, /visible/i);
 });
+
+// ───────── tracking robustness ─────────
+test('right leg is enough: hiding the whole left leg still gives pedals and a valid calibration sample', () => {
+  const hiddenLeft = [LM.leftKnee, LM.leftAnkle, LM.leftFoot];
+  const p = analyze({ rightKneeFlex: 30, hidden: hiddenLeft });
+  assert.equal(p.quality.lowerBody, false);
+  assert.equal(p.quality.rightLeg, true);
+  const both = analyze({ rightKneeFlex: 30 });
+  assert.equal(p.gestures.pedalState.accelerator, both.gestures.pedalState.accelerator, 'same pedal value as with both legs visible');
+  assert.ok(p.gestures.pedalState.accelerator > 0.5, `accelerator ${p.gestures.pedalState.accelerator}`);
+  const none = analyze({ rightKneeFlex: 30, hidden: [LM.rightAnkle] });
+  assert.equal(none.quality.rightLeg, false);
+});
+
+test('calibration succeeds with only the right leg visible', async () => {
+  const t = new BodyTracker({ camera: null, estimator: null });
+  const s = makeSkeleton({ hidden: [LM.leftKnee, LM.leftAnkle, LM.leftFoot] });
+  let ts = 0;
+  const feed = setInterval(() => t.processFrame(s.landmarks, s.worldLandmarks, (ts += 33), s.aspect), 1);
+  const res = await t.calibrate({ durationMs: 60, minSamples: 5 });
+  clearInterval(feed);
+  assert.equal(res.ok, true, res.reason);
+});
+
+test('a one-frame ankle spike does not reach the accelerator (median filter)', () => {
+  const a = new PoseAnalyzer();
+  const press = (flex) => analyze({ rightKneeFlex: flex }, a).gestures.pedalState.accelerator;
+  press(0); press(0);
+  assert.equal(press(50), 0, 'single spike suppressed');
+  press(0);
+  press(50); press(50);
+  assert.ok(press(50) > 0.95, 'sustained lift passes through');
+});
+
+test('a point with low confidence is held, not fed into the smoothing filter', () => {
+  const t = new BodyTracker({ camera: null, estimator: null });
+  const good = makeSkeleton({});
+  t.processFrame(good.landmarks, good.worldLandmarks, 1000, good.aspect);
+  const before = t.lastPose.landmarks.rightAnkle;
+  const bad = makeSkeleton({});
+  bad.landmarks[LM.rightAnkle] = { x: 0.9, y: 0.1, z: 0, visibility: 0.05 };    // wild guess
+  t.processFrame(bad.landmarks, bad.worldLandmarks, 1033, bad.aspect);
+  const during = t.lastPose.landmarks.rightAnkle;
+  assert.ok(Math.abs(during.x - before.x) < 1e-3 && Math.abs(during.y - before.y) < 1e-3, 'held');
+  t.processFrame(good.landmarks, good.worldLandmarks, 1066, good.aspect);
+  const after = t.lastPose.landmarks.rightAnkle;
+  assert.ok(Math.abs(after.x - before.x) < 0.01 && Math.abs(after.y - before.y) < 0.01, 'no jump when it comes back');
+});
+
+test('tracker: full model failing to load falls back to lite; slow detection steps down to lite', async () => {
+  globalThis.requestAnimationFrame ??= () => 0;
+  const mk = (variant, { failInit = false, slow = false } = {}) => ({
+    variant, disposed: false,
+    async init() { if (failInit) throw new Error('download failed'); },
+    detect() { if (slow) { const e = performance.now() + 50; while (performance.now() < e); } return null; },
+    dispose() { this.disposed = true; },
+  });
+  // 1. init fallback
+  const made = [];
+  const t1 = new BodyTracker({ camera: null, estimatorFactory: (v) => { const e = mk(v, { failInit: v === 'full' }); made.push(e); return e; } });
+  await t1._initEstimator();
+  assert.equal(t1.estimator.variant, 'lite');
+  assert.equal(made[0].disposed, true);
+  // 2. perf downgrade
+  const t2 = new BodyTracker({ camera: null, estimatorFactory: (v) => mk(v, { slow: v === 'full' }) });
+  t2._running = true;
+  t2.video = { readyState: 4, videoWidth: 640, videoHeight: 480, currentTime: 0 };
+  for (let i = 1; i <= 75; i++) { t2.video.currentTime = i; t2._lastRun = 0; t2._tick(i * 100); }
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(t2.estimator.variant, 'lite');
+  t2._running = false;
+  // 3. custom estimators are never swapped
+  const custom = mk('full', { slow: true });
+  const t3 = new BodyTracker({ camera: null, estimator: custom });
+  t3._running = true; t3.video = { readyState: 4, videoWidth: 640, videoHeight: 480, currentTime: 0 };
+  for (let i = 1; i <= 75; i++) { t3.video.currentTime = i; t3._lastRun = 0; t3._tick(i * 100); }
+  assert.equal(t3.estimator, custom);
+  t3._running = false;
+});

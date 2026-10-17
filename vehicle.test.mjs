@@ -80,3 +80,71 @@ test('driving off the road is flagged and slows the car', () => {
   v.step(1 / 60, idle, road);
   assert.equal(v.offRoad, true);
 });
+
+// ───────── automatic gearbox (the app's default) ─────────
+const gearLog = (v, phases) => {
+  const log = []; let last = v.gear, t = 0;
+  for (const [secs, inp] of phases) for (let i = 0; i < secs * 60; i++) {
+    v.step(1 / 60, { ...idle, ...inp }, road); t += 1 / 60;
+    if (v.gear !== last) { log.push({ t, from: last, to: v.gear, kmh: v.kmh, rpm: v.rpm }); last = v.gear; }
+  }
+  return log;
+};
+
+test('auto is the default mode and ignores the clutch pedal entirely', () => {
+  const v = new Vehicle();
+  assert.equal(v.mode, 'auto');
+  run(v, 3, { ...idle, throttle: 1, clutch: 1 });
+  assert.ok(v.speed > 10, `still drives with clutch input: ${v.speed}`);
+  assert.equal(v.engineOn, true);
+});
+
+test('auto: changes up through the gears under full throttle and never over-revs', () => {
+  const v = new Vehicle();
+  const log = gearLog(v, [[14, { throttle: 1 }]]);
+  assert.deepEqual(log.map((l) => l.to), [2, 3, 4]);
+  assert.ok(log.every((l) => l.to > l.from));
+  assert.ok(v.rpm < v.p.redline, `rpm ${v.rpm}`);
+  for (const l of log) assert.ok(l.rpm > 2300, `post-shift rpm ${l.rpm}`);
+});
+
+test('auto: light throttle shifts up earlier (lower speed/revs) than full throttle', () => {
+  const light = gearLog(new Vehicle(), [[20, { throttle: 0.35 }]])[0];
+  const full = gearLog(new Vehicle(), [[8, { throttle: 1 }]])[0];
+  assert.ok(light && full);
+  assert.ok(light.kmh < full.kmh, `${light.kmh} vs ${full.kmh}`);
+});
+
+test('auto: kickdown — flooring it at cruise drops a gear', () => {
+  const v = new Vehicle();
+  run(v, 14, { ...idle, throttle: 0.45 });
+  const g = v.gear;
+  assert.ok(g >= 3, `cruising in gear ${g}`);
+  const log = gearLog(v, [[1.2, { throttle: 1 }]]);
+  assert.ok(log.some((l) => l.to < l.from), 'a downshift happened');
+});
+
+test('auto: steady cruise does not hunt between gears', () => {
+  const v = new Vehicle();
+  run(v, 12, { ...idle, throttle: 0.5 });
+  const log = gearLog(v, [[10, { throttle: 0.18 }]]);          // hold a steady-ish speed
+  assert.ok(log.length <= 2, `${log.length} shifts: ${JSON.stringify(log.map((l) => `${l.from}>${l.to}`))}`);
+});
+
+test('auto: braking to a stop steps down to 1st, and pulling away works again', () => {
+  const v = new Vehicle();
+  run(v, 9, { ...idle, throttle: 1 });
+  run(v, 12, { ...idle, brake: 1 });
+  assert.equal(v.speed, 0);
+  assert.equal(v.gear, 1);
+  run(v, 3, { ...idle, throttle: 0.8 });
+  assert.ok(v.kmh > 25, `${v.kmh}`);
+  assert.equal(v.engineOn, true);
+});
+
+test('auto: full-throttle 0–100 km/h stays in a sensible range with the new shift points', () => {
+  const v = new Vehicle();
+  let t = 0, t100 = null;
+  while (t < 30) { v.step(1 / 60, { ...idle, throttle: 1 }, road); t += 1 / 60; if (t100 === null && v.kmh >= 100) t100 = t; }
+  assert.ok(t100 > 5 && t100 < 12, `0-100 in ${t100}`);
+});

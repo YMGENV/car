@@ -42,7 +42,7 @@ export function slimPose(p) {
   const g = p.gestures ?? {}, h = g.hands ?? {}, ped = g.pedalState ?? {};
   return {
     valid: !!p.valid, calibrated: !!p.calibrated, fps: p.fps ?? 0,
-    quality: { upperBody: !!p.quality?.upperBody, lowerBody: !!p.quality?.lowerBody },
+    quality: { upperBody: !!p.quality?.upperBody, lowerBody: !!p.quality?.lowerBody, rightLeg: !!p.quality?.rightLeg },
     angles: { leftKnee: p.angles?.leftKnee ?? null, rightKnee: p.angles?.rightKnee ?? null },
     gestures: {
       handsPosition: g.handsPosition ?? 'lost',

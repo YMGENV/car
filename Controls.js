@@ -7,7 +7,7 @@
  *   Steering  = sum of  (a) wheel tilt of your two wrists   (b) hands shifted left/right of your body centre
  *   Throttle  = right foot raised / knee bent, foot kept at its own side
  *   Brake     = right foot raised AND swept toward your body centre (the brake pedal sits left of the throttle)
- *   Clutch    = left foot raised / knee bent
+ *   (Automatic gearbox: there is no clutch. Only the right foot is needed, so the left leg may be out of view.)
  */
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const smooth = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
@@ -22,6 +22,7 @@ export const DEFAULT_MAPPING = {
   pedalGain: 1.15,
   pedalRate: 22,
   bodyTimeoutMs: 500,      // poses older than this are ignored (tracker stalled)
+  dropoutHoldMs: 250,      // keep the last good inputs this long when tracking blips out (a few lost frames)
 };
 
 const shape = (v, dz, expo) => {
@@ -36,6 +37,7 @@ export class InputMapper {
     this.keys = new Set();
     this.pose = null; this.poseAt = 0;
     this.out = { steer: 0, throttle: 0, brake: 0, clutch: 0 };
+    this._lastBody = null; this._lastBodyAt = 0;
     this._key = { steer: 0 };
     this.sources = { steer: 'none', pedals: 'none' };
     this.onAction = null;     // (name) => void for one-shot keys
@@ -45,9 +47,9 @@ export class InputMapper {
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName)) return;   // typing the join code, etc.
       if (e.ctrlKey || e.metaKey || e.altKey) return;   // leave browser shortcuts (Ctrl+R, Ctrl+C, Cmd+V...) alone
       this.keys.add(e.code);
-      const act = { KeyE: 'shiftUp', KeyQ: 'shiftDown', KeyT: 'mode', KeyV: 'camera', KeyC: 'calibrate', KeyR: 'reset', KeyH: 'debug', KeyY: 'stall' }[e.code];
+      const act = { KeyV: 'camera', KeyC: 'calibrate', KeyR: 'reset', KeyH: 'debug' }[e.code];
       if (act) this.onAction?.(act);
-      if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+      if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();   // stop the page scrolling
     };
     this._up = (e) => this.keys.delete(e.code);
     this._blur = () => this.keys.clear();
@@ -69,8 +71,11 @@ export class InputMapper {
 
   /** Raw (unsmoothed) body targets from the latest pose, or null if the body isn't driving. */
   _bodyTargets() {
-    const p = this.pose, m = this.m;
-    if (!p || !p.valid || performance.now() - this.poseAt > m.bodyTimeoutMs) return null;
+    const p = this.pose, m = this.m, now = performance.now();
+    if (!p || now - this.poseAt > m.bodyTimeoutMs) return null;
+    if (!p.valid) {                                           // person briefly lost: ride through short dropouts
+      return this._lastBody && now - this._lastBodyAt < m.dropoutHoldMs ? this._lastBody : null;
+    }
     const h = p.gestures.hands, ped = p.gestures.pedalState;
     let steer = 0;
     const handsUsable = h.visible && (h.state === 'wheel' || h.state === 'free');
@@ -79,11 +84,11 @@ export class InputMapper {
       const lat = clamp(h.lateral / m.steerLateral, -1, 1);
       steer = shape(clamp(tilt + lat, -1, 1), m.steerDeadzone, m.steerExpo);   // either gesture alone reaches full lock; together they add
     }
-    const pedal = (v) => (p.quality.lowerBody ? clamp(shape(v * m.pedalGain, m.pedalDeadzone, 1), 0, 1) : 0);
-    return {
-      steer, hands: handsUsable,
-      throttle: pedal(ped.accelerator), brake: pedal(ped.brake), clutch: pedal(ped.clutch), feet: p.quality.lowerBody,
-    };
+    const feet = p.quality.rightLeg ?? p.quality.lowerBody;                   // only the right foot drives the pedals
+    const pedal = (v) => (feet ? clamp(shape(v * m.pedalGain, m.pedalDeadzone, 1), 0, 1) : 0);
+    const t = { steer, hands: handsUsable, throttle: pedal(ped.accelerator), brake: pedal(ped.brake), clutch: 0, feet };
+    this._lastBody = t; this._lastBodyAt = now;
+    return t;
   }
 
   /** Call once per frame; returns {steer, throttle, brake, clutch, sources}. */
@@ -96,7 +101,6 @@ export class InputMapper {
       : Math.sign(this._key.steer) * Math.max(0, Math.abs(this._key.steer) - 4 * dt);
     const kThr = k.has('ArrowUp') || k.has('KeyW') ? 1 : 0;
     const kBrk = k.has('ArrowDown') || k.has('KeyS') ? 1 : 0;
-    const kClu = k.has('ShiftLeft') || k.has('ShiftRight') || k.has('KeyZ') || k.has('Space') ? 1 : 0;
 
     const body = this._bodyTargets();
     // steer: keyboard wins when used, else body
@@ -105,8 +109,8 @@ export class InputMapper {
     // pedals: whichever is pressed harder
     const thr = Math.max(kThr, body?.throttle ?? 0);
     const brk = Math.max(kBrk, body?.brake ?? 0);
-    const clu = Math.max(kClu, body?.clutch ?? 0);
-    this.sources.pedals = (kThr || kBrk || kClu) ? 'keys' : body?.feet ? 'body' : 'none';
+    const clu = 0;                                          // automatic gearbox: no clutch
+    this.sources.pedals = (kThr || kBrk) ? 'keys' : body?.feet ? 'body' : 'none';
 
     const o = this.out;
     o.steer = smooth(o.steer, steerTarget, m.steerRate, dt);

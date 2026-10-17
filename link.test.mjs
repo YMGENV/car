@@ -149,3 +149,17 @@ test('player auto-reconnects when the viewer connection drops', async () => {
   assert.equal(ps.at(-1), 'connected');
   assert.equal(viewer.state, 'connected');
 });
+
+test('controls: short tracking dropouts are ridden through, long ones are not; left leg is not needed', async () => {
+  const t = new BodyTracker({ camera: null, estimator: null });
+  const s = makeSkeleton({ rightKneeFlex: 30, hidden: [25, 27, 31] });
+  const full = t.processFrame(s.landmarks, s.worldLandmarks, 1000, s.aspect);
+  const m = new InputMapper();
+  m.setPose(slimPose(full));
+  const live = m._bodyTargets();
+  assert.ok(live.throttle > 0.5 && live.feet, 'throttle with left leg hidden');
+  m.setPose({ ...slimPose(full), valid: false });
+  assert.equal(m._bodyTargets().throttle, live.throttle, 'held during a blip');
+  m._lastBodyAt -= 400;
+  assert.equal(m._bodyTargets(), null, 'dropped after the hold window');
+});

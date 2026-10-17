@@ -40,12 +40,12 @@ export function buildSteeringWheel(radius = 0.19) {
 
 // ───────────────────────────── pedals ─────────────────────────────
 
-/** Three hinged pedals (clutch, brake, accelerator). set({clutch,brake,accelerator}) with values 0..1. */
+/** Hinged pedals. Automatic car: brake + accelerator only. set({brake,accelerator}) with values 0..1. */
 export function buildPedals() {
   const root = new THREE.Group();
-  const defs = { clutch: { x: -0.2, color: 0x3a7bff }, brake: { x: 0, color: 0xff3b3b }, accelerator: { x: 0.2, color: 0x35d070 } };
+  const defs = { brake: { x: -0.1, color: 0xff3b3b }, accelerator: { x: 0.1, color: 0x35d070 } };
   const pedals = {};
-  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.02, 0.3), phong(0x2a2c34));
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.02, 0.3), phong(0x2a2c34));
   plate.position.set(0, -0.015, -0.02);
   root.add(plate);
   for (const [name, d] of Object.entries(defs)) {
