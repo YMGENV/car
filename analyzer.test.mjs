@@ -215,3 +215,17 @@ test('tracker: full model failing to load falls back to lite; slow detection ste
   assert.equal(t3.estimator, custom);
   t3._running = false;
 });
+
+test('one hand shown: single-hand data follows it inward/outward, centred on the wheel-grip position', () => {
+  const rightOnly = (o = {}) => analyze({ hidden: [LM.leftWrist], ...o });
+  const n = rightOnly();
+  assert.equal(n.gestures.handsPosition, 'partial');
+  assert.equal(n.gestures.hands.single.side, 'right');
+  assert.equal(n.gestures.hands.single.usable, true);
+  const r = rightOnly({ handsShift: 0.06 }), l = rightOnly({ handsShift: -0.06 });
+  assert.ok(r.gestures.hands.single.dx > n.gestures.hands.single.dx + 0.2);
+  assert.ok(l.gestures.hands.single.dx < n.gestures.hands.single.dx - 0.2);
+  const leftOnly = analyze({ hidden: [LM.rightWrist] });
+  assert.equal(leftOnly.gestures.hands.single.side, 'left');
+  assert.equal(analyze({}).gestures.hands.single, null);
+});

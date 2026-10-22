@@ -9,6 +9,8 @@
  *   Player → Viewer   { t: 'pose', p: slimPose }
  *                     { t: 'calib', n?: 3|2|1, hold?: true, progress?: 0..1, end?: true, ok?: bool, reason?: string }
  *   Viewer → Player   { t: 'cmd', c: 'calibrate' }
+ *   Player → Viewer   { t: 'cmd', c: 'autopilot', on: bool }     (tap on the phone)
+ *   Viewer → Player   { t: 'ap', on: bool }                       (current auto-pilot state, so the phone button matches)
  *
  * The Peer constructor is injected so the logic can be unit-tested without a browser.
  */
@@ -46,7 +48,10 @@ export function slimPose(p) {
     angles: { leftKnee: p.angles?.leftKnee ?? null, rightKnee: p.angles?.rightKnee ?? null },
     gestures: {
       handsPosition: g.handsPosition ?? 'lost',
-      hands: { state: h.state ?? 'lost', visible: !!h.visible, wheelAngleDeg: h.wheelAngleDeg ?? 0, lateral: h.lateral ?? 0, separation: h.separation ?? 0 },
+      hands: {
+        state: h.state ?? 'lost', visible: !!h.visible, wheelAngleDeg: h.wheelAngleDeg ?? 0, lateral: h.lateral ?? 0, separation: h.separation ?? 0,
+        single: h.single ? { side: h.single.side, dx: h.single.dx ?? 0, rel: h.single.rel ?? 0, usable: !!h.single.usable } : null,
+      },
       pedalState: {
         accelerator: ped.accelerator ?? 0, brake: ped.brake ?? 0, clutch: ped.clutch ?? 0,
         rightFootZone: ped.rightFootZone ?? 'accelerator',

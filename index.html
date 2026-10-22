@@ -58,17 +58,37 @@
     background: rgba(255,90,60,.9); color: #1a0c08; opacity: 0; transition: opacity .15s; pointer-events: none; white-space: nowrap; }
   #tip.on { opacity: 1; }
 
-  #toast { position: fixed; top: 18px; left: 50%; transform: translate(-50%, -20px); opacity: 0; transition: .2s; pointer-events: none;
+  #toast { position: fixed; top: 64px; left: 50%; transform: translate(-50%, -20px); opacity: 0; transition: .2s; pointer-events: none;
     padding: 9px 18px; border-radius: 10px; background: rgba(14,16,22,.9); border: 1px solid var(--line);
     font: 600 18px var(--display); letter-spacing: .04em; max-width: min(90vw, 560px); text-align: center; z-index: 30; }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
   #toast.ok { border-color: rgba(61,220,132,.5); } #toast.warn { border-color: rgba(255,90,60,.7); color: #ffd9cf; }
+
+  /* trip distance (top-centre) */
+  #odo { position: fixed; top: max(14px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 12;
+    padding: 6px 16px 7px; display: flex; align-items: baseline; gap: 6px; cursor: pointer; white-space: nowrap; touch-action: manipulation; }
+  #odoLabel { font: 600 11px var(--mono); color: var(--dim); letter-spacing: .12em; margin-right: 4px; }
+  #odoVal { font: 700 28px/1 var(--display); letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+  #odoUnit { font: 600 13px var(--mono); color: var(--amber); }
+  body[data-ap="on"] #odo { border-color: rgba(77,141,255,.6); }
+
+  /* auto-pilot: bluish tint over the 3D scene (sits under the HUD panels, which stay crisp) */
+  #apTint { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .6s;
+    background: rgba(60,130,255,.17); box-shadow: inset 0 0 140px 30px rgba(77,141,255,.40); }
+  body[data-ap="on"] #apTint { opacity: 1; }
+  #modeTxt.ap { color: var(--blue); }
 
   /* key help + buttons */
   #bar { position: fixed; left: 14px; bottom: max(14px, env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: 34vw; }
   .btn { all: unset; cursor: pointer; padding: 7px 12px; border-radius: 9px; background: var(--panel); border: 1px solid var(--line);
     font: 600 15px var(--display); letter-spacing: .05em; text-transform: uppercase; backdrop-filter: blur(10px); }
   .btn:hover { border-color: var(--amber); color: var(--amber); }
+  #apBtn { touch-action: manipulation; display: inline-flex; align-items: center; gap: 8px; }
+  #apBtn .dot { width: 10px; height: 10px; border-radius: 50%; background: #666; }
+  #apBtn .st { font: 600 12px var(--mono); color: var(--dim); letter-spacing: .08em; }
+  #apBtn[aria-pressed="true"] { background: rgba(77,141,255,.28); border-color: var(--blue); color: #cfe0ff; }
+  #apBtn[aria-pressed="true"] .dot { background: var(--blue); box-shadow: 0 0 10px var(--blue); }
+  #apBtn[aria-pressed="true"] .st { color: #cfe0ff; }
   #src { position: fixed; right: 16px; top: 14px; font: 500 11px var(--mono); color: rgba(255,240,220,.7); text-shadow: 0 1px 3px #000; }
   #debug { position: fixed; right: 14px; top: 34px; margin: 0; padding: 10px 12px; font: 400 11px/1.5 var(--mono); white-space: pre; color: #d6e8ff; }
 
@@ -111,6 +131,7 @@
   @media (max-width: 720px) {
     .cols { grid-template-columns: 1fr; } #card { padding: 20px; } #card h1 { font-size: 40px; }
     #bar { max-width: 60vw; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 130px); }
+    #odoVal { font-size: 22px; } #odoLabel { display: none; }
     #cluster { transform: translateX(-50%) scale(.82); transform-origin: bottom center; }
   }
 
@@ -132,7 +153,7 @@
   #start:not(.locked) #btnClose { display: none; }
 
   /* link status (viewer shows the code; player shows connection state) */
-  #link { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 25; padding: 12px 20px; text-align: center; max-width: min(92vw, 520px); }
+  #link { position: fixed; top: 112px; left: 50%; transform: translateX(-50%); z-index: 25; padding: 12px 20px; text-align: center; max-width: min(92vw, 520px); }
   #linkState { font: 600 13px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--amber); }
   #link.ok #linkState { color: var(--green); }
   #linkCode { font: 700 54px/1.1 var(--mono); letter-spacing: .18em; padding-left: .18em; -webkit-user-select: text; user-select: text; }
@@ -145,7 +166,12 @@
   /* viewer: no camera feed, just hints + calibrate; player: big camera preview, no 3D */
   body[data-role="viewer"] #camWrap, body[data-role="viewer"] #btnSwitch { display: none; }
   body[data-role="player"] canvas#scene, body[data-role="player"] #cluster, body[data-role="player"] #tip,
-  body[data-role="player"] #bar, body[data-role="player"] #src, body[data-role="player"] #debug { display: none; }
+  body[data-role="player"] #odo, body[data-role="player"] #src, body[data-role="player"] #debug,
+  body[data-role="player"] #btnCamView, body[data-role="player"] #btnHelp { display: none; }
+  body[data-role="player"] #bar { left: 50%; transform: translateX(-50%); max-width: none; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 124px); }
+  body[data-role="player"] #apBtn { min-width: min(86vw, 340px); min-height: 68px; justify-content: center; font-size: 28px; border-radius: 16px; gap: 12px; }
+  body[data-role="player"] #apBtn .dot { width: 14px; height: 14px; }
+  body[data-role="player"] #apBtn .st { font-size: 16px; }
   body[data-role="player"] #camBox { left: 50%; transform: translateX(-50%); width: min(560px, 94vw); }
   body[data-role="player"] #hints { font-size: 18px; }
 </style>
@@ -156,6 +182,7 @@
 </head>
 <body>
 <canvas id="scene"></canvas>
+<div id="apTint"></div>
 
 <!-- camera preview with skeleton overlay + live coaching hints -->
 <aside id="camBox" class="glass" hidden>
@@ -169,6 +196,7 @@
   <ul id="hints"></ul>
 </aside>
 
+<div id="odo" class="glass" title="Distance this trip — tap to switch km / miles"><span id="odoLabel">TRIP</span><span id="odoVal">0.00</span><span id="odoUnit">km</span></div>
 <div id="src"></div>
 <pre id="debug" class="glass" hidden></pre>
 
@@ -190,6 +218,7 @@
 <div id="bar">
   <button class="btn" id="btnCamView">View · V</button>
   <button class="btn" id="btnHelp">Help</button>
+  <button class="btn" id="apBtn" aria-pressed="false" title="Auto-pilot (P)"><span class="dot"></span><span>Auto-pilot</span><span class="st" id="apState">OFF</span></button>
 </div>
 
 <div id="calib">
@@ -217,11 +246,13 @@
         <h2>Controls</h2>
         <table>
           <tr><td>Steer</td><td>Tilt your hands like turning a wheel, or slide them left / right</td></tr>
+          <tr><td>One hand</td><td>Show just <b>one</b> hand out as if gripping the wheel: move it outward / inward to steer. The other hand is ignored</td></tr>
           <tr><td>Throttle</td><td>Lift your <b>right</b> foot (knee up)</td></tr>
           <tr><td>Brake</td><td>Lift the right foot and sweep it toward your centre</td></tr>
+          <tr><td>Auto-pilot</td><td>Tap the <b>Auto-pilot</b> button on the player phone (or <kbd>P</kbd>). Brake to take over</td></tr>
           <tr><td>Gears</td><td>Automatic: the car changes gear for you</td></tr>
           <tr><td>Keyboard</td><td><kbd>←</kbd><kbd>→</kbd> steer · <kbd>↑</kbd> throttle · <kbd>↓</kbd> brake</td></tr>
-          <tr><td>Other keys</td><td><kbd>V</kbd> view · <kbd>C</kbd> calibrate · <kbd>R</kbd> reset · <kbd>H</kbd> debug</td></tr>
+          <tr><td>Other keys</td><td><kbd>V</kbd> view · <kbd>P</kbd> auto-pilot · <kbd>C</kbd> calibrate · <kbd>R</kbd> reset · <kbd>H</kbd> debug</td></tr>
         </table>
       </div>
     </div>

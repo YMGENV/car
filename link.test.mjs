@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ViewerLink, PlayerLink, LinkError, makeCode, normalizeCode, slimPose, CODE_LEN, PEER_PREFIX } from './Link.js';
-import { BodyTracker } from './BodyTracker.js';
+import { BodyTracker, PoseAnalyzer, LM } from './BodyTracker.js';
 import { InputMapper } from './Controls.js';
 import { makeSkeleton } from './skeleton.mjs';
 
@@ -162,4 +162,12 @@ test('controls: short tracking dropouts are ridden through, long ones are not; l
   assert.equal(m._bodyTargets().throttle, live.throttle, 'held during a blip');
   m._lastBodyAt -= 400;
   assert.equal(m._bodyTargets(), null, 'dropped after the hold window');
+});
+
+test('slimPose carries the single-hand data to the Viewer', () => {
+  const full = new PoseAnalyzer().analyze({ ...makeSkeleton({ hidden: [LM.leftWrist] }), timestamp: 0 });
+  const s = slimPose(full);
+  assert.equal(s.gestures.hands.single.side, 'right');
+  assert.equal(typeof s.gestures.hands.single.dx, 'number');
+  assert.equal(slimPose(new PoseAnalyzer().analyze({ ...makeSkeleton({}), timestamp: 0 })).gestures.hands.single, null);
 });

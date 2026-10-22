@@ -5,6 +5,7 @@
  * retune or replace the mapping without touching the tracker or the physics.
  *
  *   Steering  = sum of  (a) wheel tilt of your two wrists   (b) hands shifted left/right of your body centre
+ *               ONE hand shown → steering follows that hand in/out of the wheel-grip position; the hidden hand is ignored
  *   Throttle  = right foot raised / knee bent, foot kept at its own side
  *   Brake     = right foot raised AND swept toward your body centre (the brake pedal sits left of the throttle)
  *   (Automatic gearbox: there is no clutch. Only the right foot is needed, so the left leg may be out of view.)
@@ -15,6 +16,7 @@ const smooth = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-
 export const DEFAULT_MAPPING = {
   steerTiltDeg: 35,        // wrist-line tilt that equals full lock
   steerLateral: 0.55,      // hand-centre shift (in shoulder widths) that equals full lock
+  oneHandReach: 0.55,      // single hand: sideways distance from the grip position (shoulder widths) that equals full lock
   steerDeadzone: 0.04,
   steerExpo: 1.35,         // >1 = finer control near centre
   steerRate: 14,           // smoothing (1/s)
@@ -47,7 +49,7 @@ export class InputMapper {
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName)) return;   // typing the join code, etc.
       if (e.ctrlKey || e.metaKey || e.altKey) return;   // leave browser shortcuts (Ctrl+R, Ctrl+C, Cmd+V...) alone
       this.keys.add(e.code);
-      const act = { KeyV: 'camera', KeyC: 'calibrate', KeyR: 'reset', KeyH: 'debug' }[e.code];
+      const act = { KeyV: 'camera', KeyC: 'calibrate', KeyR: 'reset', KeyH: 'debug', KeyP: 'autopilot' }[e.code];
       if (act) this.onAction?.(act);
       if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();   // stop the page scrolling
     };
@@ -78,15 +80,19 @@ export class InputMapper {
     }
     const h = p.gestures.hands, ped = p.gestures.pedalState;
     let steer = 0;
-    const handsUsable = h.visible && (h.state === 'wheel' || h.state === 'free');
-    if (handsUsable) {
+    const bothHands = h.visible && (h.state === 'wheel' || h.state === 'free');
+    const oneHand = !bothHands && h.state === 'partial' && !!h.single?.usable;
+    const handsUsable = bothHands || oneHand;
+    if (oneHand) {
+      steer = shape(clamp(h.single.dx / m.oneHandReach, -1, 1), m.steerDeadzone, m.steerExpo);
+    } else if (bothHands) {
       const tilt = clamp(h.wheelAngleDeg / m.steerTiltDeg, -1, 1);
       const lat = clamp(h.lateral / m.steerLateral, -1, 1);
       steer = shape(clamp(tilt + lat, -1, 1), m.steerDeadzone, m.steerExpo);   // either gesture alone reaches full lock; together they add
     }
     const feet = p.quality.rightLeg ?? p.quality.lowerBody;                   // only the right foot drives the pedals
     const pedal = (v) => (feet ? clamp(shape(v * m.pedalGain, m.pedalDeadzone, 1), 0, 1) : 0);
-    const t = { steer, hands: handsUsable, throttle: pedal(ped.accelerator), brake: pedal(ped.brake), clutch: 0, feet };
+    const t = { steer, hands: handsUsable, oneHand, throttle: pedal(ped.accelerator), brake: pedal(ped.brake), clutch: 0, feet };
     this._lastBody = t; this._lastBodyAt = now;
     return t;
   }
@@ -105,7 +111,7 @@ export class InputMapper {
     const body = this._bodyTargets();
     // steer: keyboard wins when used, else body
     const steerTarget = Math.abs(this._key.steer) > 0.001 ? this._key.steer : (body?.steer ?? 0);
-    this.sources.steer = Math.abs(this._key.steer) > 0.001 ? 'keys' : body?.hands ? 'body' : 'none';
+    this.sources.steer = Math.abs(this._key.steer) > 0.001 ? 'keys' : body?.hands ? (body.oneHand ? 'body (1 hand)' : 'body') : 'none';
     // pedals: whichever is pressed harder
     const thr = Math.max(kThr, body?.throttle ?? 0);
     const brk = Math.max(kBrk, body?.brake ?? 0);

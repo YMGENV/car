@@ -5,6 +5,7 @@
 import { BodyTracker, CameraError } from './BodyTracker.js';
 import { Simulator } from './Simulator.js';
 import { InputMapper } from './Controls.js';
+import { Autopilot } from './Autopilot.js';
 import { ViewerLink, PlayerLink, LinkError, normalizeCode, joinUrl, CODE_LEN } from './Link.js';
 
 const $ = (id) => document.getElementById(id);
@@ -150,7 +151,7 @@ function onLinkStatus(s) {
   renderLink(s);
   if (s.state === prevLinkState) return;
   if (role === 'viewer') {
-    if (s.state === 'connected') toast('Player connected', 'ok');
+    if (s.state === 'connected') { toast('Player connected', 'ok'); link?.send({ t: 'ap', on: ap.on }); }
     else if (s.state === 'waiting' && prevLinkState === 'connected') { toast('Player disconnected', 'warn'); mapper.setPose(null); lastPose = null; }
     $('trackState').dataset.state = s.state === 'connected' ? 'running' : 'starting';
   } else if (role === 'player') {
@@ -228,6 +229,7 @@ function onLinkPose(p) {
   mapper.setPose(p);
 }
 function onViewerMessage(m) {
+  if (m.t === 'cmd' && m.c === 'autopilot') { setAutopilot(!!m.on); return; }
   if (m.t !== 'calib') return;
   if (m.end) { calibHide(); if (m.ok) toast('Calibrated — your rest pose is now zero', 'ok'); else toast(m.reason || 'Calibration failed', 'warn'); }
   else if (m.progress != null) $('calibBar').style.width = `${Math.round(m.progress * 100)}%`;
@@ -235,7 +237,10 @@ function onViewerMessage(m) {
   else if (m.n) calibShow(m.n, 'Get in your driving pose.<br><b>Hands as on a wheel, both feet flat on the floor.</b>');
 }
 // Player side: commands from the viewer
-function onPlayerMessage(m) { if (m.t === 'cmd' && m.c === 'calibrate') runCalibration(); }
+function onPlayerMessage(m) {
+  if (m.t === 'cmd' && m.c === 'calibrate') runCalibration();
+  else if (m.t === 'ap') { const was = apOn; showAp(!!m.on); if (was !== apOn) toast(apOn ? 'Auto-pilot ON' : 'Auto-pilot off', apOn ? 'ok' : ''); }
+}
 
 // ?join=CODE (link from the viewer's "Copy link") opens straight on the Player tab
 {
@@ -306,7 +311,9 @@ function hints(p) {
   if (!p.valid) return ['No person detected — step into view'];
   const out = [];
   if (!(p.quality.rightLeg ?? p.quality.lowerBody)) out.push('Right foot not visible — step back or tilt the camera down');
-  if (!p.quality.upperBody) out.push('Show both hands');
+  const one = p.gestures.hands.single?.usable;
+  if (one) { /* one-hand steering active — nothing to coach */ }
+  else if (!p.quality.upperBody) out.push('Show both hands (or raise just one hand to steer with it)');
   else if (p.gestures.handsPosition !== 'wheel') out.push('Hold both hands out as if gripping a wheel');
   if (!p.calibrated) out.push('Press C to calibrate your driving pose');
   return out;
@@ -347,13 +354,59 @@ function onCalibrationEvent(e) {
   if (role === 'player' && t - lastProgressSend > 100) { lastProgressSend = t; link?.send({ t: 'calib', progress: e.progress }); }
 }
 
+// ───────────────────────────── auto-pilot ─────────────────────────────
+// The car (and so the auto-pilot) lives on the Solo / Viewer screen. On the Player phone the button just sends
+// a request to the viewer, which answers with its real state so the button always shows the truth.
+const ap = new Autopilot();
+let apOn = false;           // what the UI shows (on the player phone: the last state the viewer reported)
+let apBrakeT = 0;           // seconds the brake has been held while auto-pilot is on
+
+function showAp(on) {
+  apOn = on;
+  document.body.dataset.ap = on ? 'on' : 'off';
+  $('apBtn').setAttribute('aria-pressed', String(on));
+  $('apState').textContent = on ? (role === 'player' ? 'ON' : `ON · ${ap.cruiseKmh} km/h`) : 'OFF';
+  if (role === 'viewer') link?.send({ t: 'ap', on });
+}
+
+function setAutopilot(on, why = '') {
+  if (role === 'player') {                                   // phone: ask the viewer to do it
+    if (!link?.send({ t: 'cmd', c: 'autopilot', on })) toast('Not connected to the viewer yet', 'warn');
+    return;
+  }
+  if (on === ap.on) return;
+  apBrakeT = 0;
+  if (on) { ap.engage(sim.vehicle); toast(`Auto-pilot ON — cruising at ${ap.cruiseKmh} km/h · brake to take over`, 'ok'); }
+  else { ap.disengage(); toast(`Auto-pilot off${why ? ` — ${why}` : ''}`); }
+  showAp(on);
+}
+const toggleAutopilot = () => setAutopilot(!apOn);
+$('apBtn').addEventListener('click', toggleAutopilot);
+
+// ───────────────────────────── trip distance (top-centre) ─────────────────────────────
+const UNIT_KEY = 'bodydrive.unit';
+let unit = (() => { try { return localStorage.getItem(UNIT_KEY) === 'mi' ? 'mi' : 'km'; } catch { return 'km'; } })();
+let tripM = 0;              // metres driven since the page opened or the car was reset
+function renderOdo() {
+  const d = unit === 'mi' ? tripM / 1609.344 : tripM / 1000;
+  $('odoVal').textContent = d.toFixed(d >= 100 ? 1 : 2);
+  $('odoUnit').textContent = unit;
+}
+$('odo').addEventListener('click', () => {
+  unit = unit === 'km' ? 'mi' : 'km';
+  try { localStorage.setItem(UNIT_KEY, unit); } catch { /* private mode */ }
+  renderOdo();
+});
+renderOdo();
+
 // ───────────────────────────── keyboard actions ─────────────────────────────
 mapper.onAction = (name) => {
   switch (name) {
     case 'camera': toggleView(); break;
     case 'calibrate': runCalibration(); break;
-    case 'reset': sim.reset(); toast('Car reset'); break;
+    case 'reset': if (role === 'player') break; setAutopilot(false); sim.reset(); tripM = 0; renderOdo(); toast('Car reset'); break;
     case 'debug': $('debug').hidden = !$('debug').hidden; break;
+    case 'autopilot': toggleAutopilot(); break;
   }
 };
 
@@ -372,7 +425,9 @@ function updateHud(dt, input) {
   const f = Math.min(1, v.rpm / v.p.redline);
   el.rpm.style.width = `${(f * 100).toFixed(0)}%`;
   el.rpm.classList.toggle('hot', f > 0.85);
-  el.mode.textContent = MODE_NAMES[v.mode];
+  el.mode.textContent = ap.on ? 'AUTO-PILOT' : MODE_NAMES[v.mode];
+  el.mode.classList.toggle('ap', ap.on);
+  renderOdo();
   el.src.textContent = `steer: ${input.sources.steer} · pedals: ${input.sources.pedals}`;
 
   let tip = '';
@@ -403,9 +458,16 @@ let prev = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - prev) / 1000);
   prev = now;
-  const input = mapper.read(dt);
+  let input = mapper.read(dt);
   if (role === 'player') { updateHud(dt, input); requestAnimationFrame(frame); return; }   // the player phone only tracks
+  if (ap.on) {
+    // taking the brake (foot or ↓) hands control back, like a real car
+    apBrakeT = input.brake > 0.6 ? apBrakeT + dt : 0;
+    if (apBrakeT > 0.15) setAutopilot(false, 'brake pressed');
+  }
+  if (ap.on) input = { ...ap.drive(sim.vehicle, sim.path, dt), sources: { steer: 'auto-pilot', pedals: 'auto-pilot' } };
   sim.update(dt, input);
+  tripM += sim.vehicle.speed * dt;
   sim.render();
   updateHud(dt, input);
   requestAnimationFrame(frame);

@@ -105,3 +105,9 @@ Mapping gains (full-lock angle, deadzones, expo, pedal gain) are in `DEFAULT_MAP
 ## Known limits
 
 Single front-on camera depth is estimated, so foot/knee motion toward the camera is the least precise signal; calibration and the knee-angle + ankle-lift blend compensate for it. No traffic, collisions or reverse gear.
+
+## Auto-pilot, one-hand driving, trip distance
+
+- **Auto-pilot** — lane keeping + cruise control. Tap the big **Auto-pilot** button on the Player phone (or the button / `P` on the game screen). It cruises at the speed you had when you switched it on (40–100 km/h; from a standstill it uses 40) and slows for bends. **Brake** (foot or `↓`) or tap the button again to take over. While it is on the scene gets a blue tint. Code: `Autopilot.js` (tests: `autopilot.test.mjs`).
+- **One-hand driving** — show only one hand (held out as if gripping the wheel) and the steering follows it: move it outward to steer toward that side, inward to steer the other way. The hidden hand is ignored. An arm hanging at your side doesn't steer. Code: `hands.single` in `BodyTracker.js`, mapping in `Controls.js`.
+- **Trip distance** — top-centre of the game screen; tap it to switch km ⇄ miles. Resets with `R`.

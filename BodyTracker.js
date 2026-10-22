@@ -306,6 +306,7 @@ export const DEFAULT_ANALYZER_CONFIG = Object.freeze({
   wheelTiltDeadband: 0,      // deg
   handsRaisedMargin: 0.15,   // wrists this many torso-lengths above shoulders = "raised"
   handsLoweredMargin: 0.75,  // wrists this many torso-lengths below shoulders = "lowered"
+  singleHandNeutral: 0.25,   // one-hand steering: wrist this far outside its own shoulder (shoulder widths) = straight ahead
 });
 
 /**
@@ -374,7 +375,7 @@ export class PoseAnalyzer {
 
     // ── Hands / steering ──
     const meas = { handAngleDeg: null, handOffset: null, kneeAngle: {}, legDrop: {}, footLateral: {} };
-    const hands = { state: 'lost', visible: false, wheelAngleDeg: 0, lateral: 0, separation: 0, turn: 'center', center: null };
+    const hands = { state: 'lost', visible: false, wheelAngleDeg: 0, lateral: 0, separation: 0, turn: 'center', center: null, single: null };
     const lw = ok(LW), rw = ok(RW);
     if (lw && rw) {
       const dx = (u[RW].x - u[LW].x) * aspect, dy = u[RW].y - u[LW].y;
@@ -400,6 +401,20 @@ export class PoseAnalyzer {
       });
     } else if (lw || rw) {
       hands.state = 'partial';
+      // ONE-HAND steering: a single visible wrist steers by how far it sits left/right of the body centre
+      // (in shoulder widths, + = user's right). The hidden hand is simply ignored.
+      const [S, W] = lw ? [LS, LW] : [RS, RW];
+      if (ok(LS, RS)) {
+        const rel = (u[W].y - shoulderY) / torso;               // 0 at shoulders, 1 at hips
+        // measured from that hand's own shoulder; a hand held out as if gripping the wheel (about 0.25 shoulder
+        // widths outside its shoulder) counts as "straight", moving it inward / outward steers
+        const own = ((u[W].x - u[S].x) * aspect) / shoulderW;
+        const off = own - (lw ? -cfg.singleHandNeutral : cfg.singleHandNeutral) - (cal.handOffset ?? 0);
+        hands.single = {
+          side: lw ? 'left' : 'right', dx: round(off, 3), rel: round(rel, 2),
+          usable: rel > -1.0 && rel < cfg.handsLoweredMargin,    // hand up in front of you; an arm hanging at your side doesn't steer
+        };
+      }
     }
 
     // ── Legs / pedals ──
@@ -475,7 +490,7 @@ export class PoseAnalyzer {
       angles: { leftElbow: null, rightElbow: null, leftKnee: null, rightKnee: null, leftHip: null, rightHip: null, shoulderTilt: null, wristLine: null },
       gestures: {
         handsPosition: 'lost',
-        hands: { state: 'lost', visible: false, wheelAngleDeg: 0, lateral: 0, separation: 0, turn: 'center', center: null },
+        hands: { state: 'lost', visible: false, wheelAngleDeg: 0, lateral: 0, separation: 0, turn: 'center', center: null, single: null },
         pedalState: { left: z, right: z, rightFootZone: 'accelerator', accelerator: 0, brake: 0, clutch: 0, active: [] },
       },
       measurements: null,

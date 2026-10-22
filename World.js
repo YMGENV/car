@@ -11,18 +11,9 @@ import * as THREE from 'three';
 
 const HORIZON = new THREE.Color(1.0, 0.66, 0.42);   // sunset horizon; also used as fog colour
 
-// ───────────────────────────── road centre-line ─────────────────────────────
-
-export class RoadPath {
-  constructor() {
-    this.halfWidth = 4.0;       // 2 lanes × 3.6 m + margins
-    this.layers = [{ A: 40, L: 140, ph: 0 }, { A: 8, L: 70, ph: 1.3 }, { A: 90, L: 520, ph: 0.7 }];
-    this._c0 = this.layers.reduce((a, l) => a + l.A * Math.sin(l.ph), 0);   // so that center(0) === 0
-  }
-  center(s) { let x = -this._c0; for (const l of this.layers) x += l.A * Math.sin(s / l.L + l.ph); return x; }
-  slope(s) { let d = 0; for (const l of this.layers) d += (l.A / l.L) * Math.cos(s / l.L + l.ph); return d; }
-  heading(s) { return Math.atan(this.slope(s)); }
-}
+// Road centre-line lives in RoadPath.js (re-exported here so existing imports keep working)
+import { RoadPath } from './RoadPath.js';
+export { RoadPath };
 
 const hash = (n, salt = 0) => { const x = Math.sin(n * 12.9898 + salt * 78.233) * 43758.5453; return x - Math.floor(x); };
 
