@@ -365,7 +365,7 @@ function showAp(on) {
   apOn = on;
   document.body.dataset.ap = on ? 'on' : 'off';
   $('apBtn').setAttribute('aria-pressed', String(on));
-  $('apState').textContent = on ? (role === 'player' ? 'ON' : `ON · ${ap.cruiseKmh} km/h`) : 'OFF';
+  $('apState').textContent = on ? 'ON' : 'OFF';
   if (role === 'viewer') link?.send({ t: 'ap', on });
 }
 
@@ -376,7 +376,7 @@ function setAutopilot(on, why = '') {
   }
   if (on === ap.on) return;
   apBrakeT = 0;
-  if (on) { ap.engage(sim.vehicle); toast(`Auto-pilot ON — cruising at ${ap.cruiseKmh} km/h · brake to take over`, 'ok'); }
+  if (on) { ap.engage(sim.vehicle); toast('Auto-pilot ON — full speed, brakes for bends · brake to take over', 'ok'); }
   else { ap.disengage(); toast(`Auto-pilot off${why ? ` — ${why}` : ''}`); }
   showAp(on);
 }
